@@ -51,7 +51,8 @@
 //! that are not available on all OSs.
 
 #![doc(html_root_url = "https://docs.rs/socket2/0.4")]
-#![deny(missing_docs, missing_debug_implementations, rust_2018_idioms)]
+#![deny(missing_docs, rust_2018_idioms)]
+#![cfg_attr(not(target_os = "wasi"), deny(missing_debug_implementations))]
 // Show required OS/features on docs.rs.
 #![cfg_attr(docsrs, feature(doc_cfg))]
 // Disallow warnings when running tests.
@@ -102,7 +103,7 @@ macro_rules! from {
     ($from: ty, $for: ty) => {
         impl From<$from> for $for {
             fn from(socket: $from) -> $for {
-                #[cfg(unix)]
+                #[cfg(any(unix, target_os="wasi"))]
                 unsafe {
                     <$for>::from_raw_fd(socket.into_raw_fd())
                 }
@@ -115,15 +116,66 @@ macro_rules! from {
     };
 }
 
+/// Link to online documentation for (almost) all supported OSs.
+#[rustfmt::skip]
+macro_rules! man_links {
+    // Links to all OSs.
+    ($syscall: tt ( $section: tt ) ) => {
+        concat!(
+            man_links!(__ intro),
+            man_links!(__ unix $syscall($section)),
+            man_links!(__ windows $syscall($section)),
+        )
+    };
+    // Links to Unix-like OSs.
+    (unix: $syscall: tt ( $section: tt ) ) => {
+        concat!(
+            man_links!(__ intro),
+            man_links!(__ unix $syscall($section)),
+        )
+    };
+    // Links to Windows only.
+    (windows: $syscall: tt ( $section: tt ) ) => {
+        concat!(
+            man_links!(__ intro),
+            man_links!(__ windows $syscall($section)),
+        )
+    };
+    // Internals.
+    (__ intro) => {
+        "\n\nAdditional documentation can be found in manual of the OS:\n\n"
+    };
+    // List for Unix-like OSs.
+    (__ unix $syscall: tt ( $section: tt ) ) => {
+        concat!(
+            " * DragonFly BSD: <https://man.dragonflybsd.org/?command=", stringify!($syscall), "&section=", stringify!($section), ">\n",
+            " * FreeBSD: <https://www.freebsd.org/cgi/man.cgi?query=", stringify!($syscall), "&sektion=", stringify!($section), ">\n",
+            " * Linux: <https://man7.org/linux/man-pages/man", stringify!($section), "/", stringify!($syscall), ".", stringify!($section), ".html>\n",
+            " * macOS: <https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/", stringify!($syscall), ".", stringify!($section), ".html> (archived, actually for iOS)\n",
+            " * NetBSD: <https://man.netbsd.org/", stringify!($syscall), ".", stringify!($section), ">\n",
+            " * OpenBSD: <https://man.openbsd.org/", stringify!($syscall), ".", stringify!($section), ">\n",
+            " * iOS: <https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/", stringify!($syscall), ".", stringify!($section), ".html> (archived)\n",
+            " * illumos: <https://illumos.org/man/3SOCKET/", stringify!($syscall), ">\n",
+        )
+    };
+    // List for Window (so just Windows).
+    (__ windows $syscall: tt ( $section: tt ) ) => {
+        concat!(
+            " * Windows: <https://docs.microsoft.com/en-us/windows/win32/api/winsock2/nf-winsock2-", stringify!($syscall), ">\n",
+        )
+    };
+}
+
 mod sockaddr;
 mod socket;
 mod sockref;
 
 #[cfg_attr(unix, path = "sys/unix.rs")]
 #[cfg_attr(windows, path = "sys/windows.rs")]
+#[cfg_attr(target_os = "wasi", path = "sys/wasi.rs")]
 mod sys;
 
-#[cfg(not(any(windows, unix)))]
+#[cfg(not(any(windows, unix, target_os = "wasi")))]
 compile_error!("Socket2 doesn't support the compile target");
 
 use sys::c_int;
@@ -159,6 +211,9 @@ impl Domain {
 
     /// Domain for IPv6 communication, corresponding to `AF_INET6`.
     pub const IPV6: Domain = Domain(sys::AF_INET6);
+
+    /// Domain for Unix socket communication, corresponding to `AF_UNIX`.
+    pub const UNIX: Domain = Domain(sys::AF_UNIX);
 
     /// Returns the correct domain for `address`.
     pub const fn for_address(address: SocketAddr) -> Domain {
@@ -197,12 +252,12 @@ impl Type {
     /// Type corresponding to `SOCK_STREAM`.
     ///
     /// Used for protocols such as TCP.
-    pub const STREAM: Type = Type(sys::SOCK_STREAM);
+    pub const STREAM: Type = Type(sys::SOCK_STREAM as i32);
 
     /// Type corresponding to `SOCK_DGRAM`.
     ///
     /// Used for protocols such as UDP.
-    pub const DGRAM: Type = Type(sys::SOCK_DGRAM);
+    pub const DGRAM: Type = Type(sys::SOCK_DGRAM as i32);
 
     /// Type corresponding to `SOCK_SEQPACKET`.
     #[cfg(feature = "all")]
@@ -249,6 +304,14 @@ impl Protocol {
 
     /// Protocol corresponding to `UDP`.
     pub const UDP: Protocol = Protocol(sys::IPPROTO_UDP);
+
+    #[cfg(target_os = "linux")]
+    /// Protocol corresponding to `MPTCP`.
+    pub const MPTCP: Protocol = Protocol(sys::IPPROTO_MPTCP);
+
+    #[cfg(all(feature = "all", any(target_os = "freebsd", target_os = "linux")))]
+    /// Protocol corresponding to `SCTP`.
+    pub const SCTP: Protocol = Protocol(sys::IPPROTO_SCTP);
 }
 
 impl From<c_int> for Protocol {
@@ -327,10 +390,16 @@ impl<'a> DerefMut for MaybeUninitSlice<'a> {
 /// See [`Socket::set_tcp_keepalive`].
 #[derive(Debug, Clone)]
 pub struct TcpKeepalive {
+    #[cfg_attr(target_os = "openbsd", allow(dead_code))]
     time: Option<Duration>,
-    #[cfg(not(any(target_os = "redox", target_os = "solaris")))]
+    #[cfg(not(any(target_os = "openbsd", target_os = "redox", target_os = "solaris")))]
     interval: Option<Duration>,
-    #[cfg(not(any(target_os = "redox", target_os = "solaris", target_os = "windows")))]
+    #[cfg(not(any(
+        target_os = "openbsd",
+        target_os = "redox",
+        target_os = "solaris",
+        target_os = "windows"
+    )))]
     retries: Option<u32>,
 }
 
@@ -339,9 +408,14 @@ impl TcpKeepalive {
     pub const fn new() -> TcpKeepalive {
         TcpKeepalive {
             time: None,
-            #[cfg(not(any(target_os = "redox", target_os = "solaris")))]
+            #[cfg(not(any(target_os = "openbsd", target_os = "redox", target_os = "solaris")))]
             interval: None,
-            #[cfg(not(any(target_os = "redox", target_os = "solaris", target_os = "windows")))]
+            #[cfg(not(any(
+                target_os = "openbsd",
+                target_os = "redox",
+                target_os = "solaris",
+                target_os = "windows"
+            )))]
             retries: None,
         }
     }
@@ -374,10 +448,13 @@ impl TcpKeepalive {
     #[cfg(all(
         feature = "all",
         any(
+            target_os = "android",
             target_os = "dragonfly",
             target_os = "freebsd",
             target_os = "fuchsia",
+            target_os = "illumos",
             target_os = "linux",
+            target_os = "wasi",
             target_os = "netbsd",
             target_vendor = "apple",
             windows,
@@ -388,9 +465,13 @@ impl TcpKeepalive {
         doc(cfg(all(
             feature = "all",
             any(
+                target_os = "android",
+                target_os = "dragonfly",
                 target_os = "freebsd",
                 target_os = "fuchsia",
+                target_os = "illumos",
                 target_os = "linux",
+                target_os = "wasi",
                 target_os = "netbsd",
                 target_vendor = "apple",
                 windows,
@@ -412,10 +493,13 @@ impl TcpKeepalive {
         feature = "all",
         any(
             doc,
+            target_os = "android",
             target_os = "dragonfly",
             target_os = "freebsd",
             target_os = "fuchsia",
+            target_os = "illumos",
             target_os = "linux",
+            target_os = "wasi",
             target_os = "netbsd",
             target_vendor = "apple",
         )
@@ -425,9 +509,13 @@ impl TcpKeepalive {
         doc(cfg(all(
             feature = "all",
             any(
+                target_os = "android",
+                target_os = "dragonfly",
                 target_os = "freebsd",
                 target_os = "fuchsia",
+                target_os = "illumos",
                 target_os = "linux",
+                target_os = "wasi",
                 target_os = "netbsd",
                 target_vendor = "apple",
             )
