@@ -11,7 +11,10 @@ use std::io::{self, IoSlice};
 use std::marker::PhantomData;
 use std::mem::{self, size_of, MaybeUninit};
 use std::net::{self, Ipv4Addr, Ipv6Addr, Shutdown};
-use std::os::windows::io::{AsRawSocket, FromRawSocket, IntoRawSocket, RawSocket};
+use std::os::windows::io::{
+    AsRawSocket, AsSocket, BorrowedSocket, FromRawSocket, IntoRawSocket, OwnedSocket, RawSocket,
+};
+use std::path::Path;
 use std::sync::Once;
 use std::time::{Duration, Instant};
 use std::{process, ptr, slice};
@@ -39,8 +42,8 @@ pub(crate) const MSG_TRUNC: c_int = 0x01;
 // Used in `Domain`.
 pub(crate) const AF_INET: c_int = windows_sys::Win32::Networking::WinSock::AF_INET as c_int;
 pub(crate) const AF_INET6: c_int = windows_sys::Win32::Networking::WinSock::AF_INET6 as c_int;
-const AF_UNIX: c_int = windows_sys::Win32::Networking::WinSock::AF_UNIX as c_int;
-const AF_UNSPEC: c_int = windows_sys::Win32::Networking::WinSock::AF_UNSPEC as c_int;
+pub(crate) const AF_UNIX: c_int = windows_sys::Win32::Networking::WinSock::AF_UNIX as c_int;
+pub(crate) const AF_UNSPEC: c_int = windows_sys::Win32::Networking::WinSock::AF_UNSPEC as c_int;
 // Used in `Type`.
 pub(crate) const SOCK_STREAM: c_int = windows_sys::Win32::Networking::WinSock::SOCK_STREAM as c_int;
 pub(crate) const SOCK_DGRAM: c_int = windows_sys::Win32::Networking::WinSock::SOCK_DGRAM as c_int;
@@ -66,12 +69,13 @@ pub(crate) type socklen_t = i32;
 pub(crate) use windows_sys::Win32::Networking::WinSock::IP_HDRINCL;
 pub(crate) use windows_sys::Win32::Networking::WinSock::{
     linger, IPPROTO_IPV6, IPV6_ADD_MEMBERSHIP, IPV6_DROP_MEMBERSHIP, IPV6_MREQ as Ipv6Mreq,
-    IPV6_MULTICAST_HOPS, IPV6_MULTICAST_IF, IPV6_MULTICAST_LOOP, IPV6_UNICAST_HOPS, IPV6_V6ONLY,
-    IP_ADD_MEMBERSHIP, IP_ADD_SOURCE_MEMBERSHIP, IP_DROP_MEMBERSHIP, IP_DROP_SOURCE_MEMBERSHIP,
-    IP_MREQ as IpMreq, IP_MREQ_SOURCE as IpMreqSource, IP_MULTICAST_IF, IP_MULTICAST_LOOP,
-    IP_MULTICAST_TTL, IP_RECVTOS, IP_TOS, IP_TTL, MSG_OOB, MSG_PEEK, SO_BROADCAST, SO_ERROR,
-    SO_KEEPALIVE, SO_LINGER, SO_OOBINLINE, SO_RCVBUF, SO_RCVTIMEO, SO_REUSEADDR, SO_SNDBUF,
-    SO_SNDTIMEO, SO_TYPE, TCP_NODELAY,
+    IPV6_MULTICAST_HOPS, IPV6_MULTICAST_IF, IPV6_MULTICAST_LOOP, IPV6_RECVTCLASS,
+    IPV6_UNICAST_HOPS, IPV6_V6ONLY, IP_ADD_MEMBERSHIP, IP_ADD_SOURCE_MEMBERSHIP,
+    IP_DROP_MEMBERSHIP, IP_DROP_SOURCE_MEMBERSHIP, IP_MREQ as IpMreq,
+    IP_MREQ_SOURCE as IpMreqSource, IP_MULTICAST_IF, IP_MULTICAST_LOOP, IP_MULTICAST_TTL,
+    IP_RECVTOS, IP_TOS, IP_TTL, MSG_OOB, MSG_PEEK, SO_BROADCAST, SO_ERROR, SO_KEEPALIVE, SO_LINGER,
+    SO_OOBINLINE, SO_RCVBUF, SO_RCVTIMEO, SO_REUSEADDR, SO_SNDBUF, SO_SNDTIMEO, SO_TYPE,
+    TCP_NODELAY,
 };
 pub(crate) const IPPROTO_IP: c_int = windows_sys::Win32::Networking::WinSock::IPPROTO_IP as c_int;
 pub(crate) const SOL_SOCKET: c_int = windows_sys::Win32::Networking::WinSock::SOL_SOCKET as c_int;
@@ -311,7 +315,7 @@ pub(crate) fn listen(socket: Socket, backlog: c_int) -> io::Result<()> {
 pub(crate) fn accept(socket: Socket) -> io::Result<(Socket, SockAddr)> {
     // Safety: `accept` initialises the `SockAddr` for us.
     unsafe {
-        SockAddr::init(|storage, len| {
+        SockAddr::try_init(|storage, len| {
             syscall!(
                 accept(socket, storage.cast(), len),
                 PartialEq::eq,
@@ -324,7 +328,7 @@ pub(crate) fn accept(socket: Socket) -> io::Result<(Socket, SockAddr)> {
 pub(crate) fn getsockname(socket: Socket) -> io::Result<SockAddr> {
     // Safety: `getsockname` initialises the `SockAddr` for us.
     unsafe {
-        SockAddr::init(|storage, len| {
+        SockAddr::try_init(|storage, len| {
             syscall!(
                 getsockname(socket, storage.cast(), len),
                 PartialEq::eq,
@@ -338,7 +342,7 @@ pub(crate) fn getsockname(socket: Socket) -> io::Result<SockAddr> {
 pub(crate) fn getpeername(socket: Socket) -> io::Result<SockAddr> {
     // Safety: `getpeername` initialises the `SockAddr` for us.
     unsafe {
-        SockAddr::init(|storage, len| {
+        SockAddr::try_init(|storage, len| {
             syscall!(
                 getpeername(socket, storage.cast(), len),
                 PartialEq::eq,
@@ -443,7 +447,7 @@ pub(crate) fn recv_from(
 ) -> io::Result<(usize, SockAddr)> {
     // Safety: `recvfrom` initialises the `SockAddr` for us.
     unsafe {
-        SockAddr::init(|storage, addrlen| {
+        SockAddr::try_init(|storage, addrlen| {
             let res = syscall!(
                 recvfrom(
                     socket,
@@ -472,7 +476,7 @@ pub(crate) fn recv_from_vectored(
 ) -> io::Result<(usize, RecvFlags, SockAddr)> {
     // Safety: `recvfrom` initialises the `SockAddr` for us.
     unsafe {
-        SockAddr::init(|storage, addrlen| {
+        SockAddr::try_init(|storage, addrlen| {
             let mut nread = 0;
             let mut flags = flags as u32;
             let res = syscall!(
@@ -635,9 +639,9 @@ fn into_ms(duration: Option<Duration>) -> u32 {
     // * Nanosecond precision is rounded up
     // * Greater than u32::MAX milliseconds (50 days) is rounded up to
     //   INFINITE (never time out).
-    duration
-        .map(|duration| min(duration.as_millis(), INFINITE as u128) as u32)
-        .unwrap_or(0)
+    duration.map_or(0, |duration| {
+        min(duration.as_millis(), INFINITE as u128) as u32
+    })
 }
 
 pub(crate) fn set_tcp_keepalive(socket: Socket, keepalive: &TcpKeepalive) -> io::Result<()> {
@@ -772,6 +776,49 @@ pub(crate) fn to_mreqn(
     }
 }
 
+#[allow(unsafe_op_in_unsafe_fn)]
+pub(crate) fn unix_sockaddr(path: &Path) -> io::Result<SockAddr> {
+    // SAFETY: a `sockaddr_storage` of all zeros is valid.
+    let mut storage = unsafe { mem::zeroed::<sockaddr_storage>() };
+    let len = {
+        let storage: &mut windows_sys::Win32::Networking::WinSock::sockaddr_un =
+            unsafe { &mut *(&mut storage as *mut sockaddr_storage).cast() };
+
+        // Windows expects a UTF-8 path here even though Windows paths are
+        // usually UCS-2 encoded. If Rust exposed OsStr's Wtf8 encoded
+        // buffer, this could be used directly, relying on Windows to
+        // validate the path, but Rust hides this implementation detail.
+        //
+        // See <https://github.com/rust-lang/rust/pull/95290>.
+        let bytes = path
+            .to_str()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "path must be valid UTF-8"))?
+            .as_bytes();
+
+        // Windows appears to allow non-null-terminated paths, but this is
+        // not documented, so do not rely on it yet.
+        //
+        // See <https://github.com/rust-lang/socket2/issues/331>.
+        if bytes.len() >= storage.sun_path.len() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "path must be shorter than SUN_LEN",
+            ));
+        }
+
+        storage.sun_family = crate::sys::AF_UNIX as sa_family_t;
+        // `storage` was initialized to zero above, so the path is
+        // already null terminated.
+        storage.sun_path[..bytes.len()].copy_from_slice(bytes);
+
+        let base = storage as *const _ as usize;
+        let path = &storage.sun_path as *const _ as usize;
+        let sun_path_offset = path - base;
+        sun_path_offset + bytes.len() + 1
+    };
+    Ok(unsafe { SockAddr::new(storage, len as socklen_t) })
+}
+
 /// Windows only API.
 impl crate::Socket {
     /// Sets `HANDLE_FLAG_INHERIT` using `SetHandleInformation`.
@@ -800,18 +847,45 @@ impl crate::Socket {
     }
 }
 
+#[cfg_attr(docsrs, doc(cfg(windows)))]
+impl AsSocket for crate::Socket {
+    fn as_socket(&self) -> BorrowedSocket<'_> {
+        // SAFETY: lifetime is bound by self.
+        unsafe { BorrowedSocket::borrow_raw(self.as_raw() as RawSocket) }
+    }
+}
+
+#[cfg_attr(docsrs, doc(cfg(windows)))]
 impl AsRawSocket for crate::Socket {
     fn as_raw_socket(&self) -> RawSocket {
         self.as_raw() as RawSocket
     }
 }
 
+#[cfg_attr(docsrs, doc(cfg(windows)))]
+impl From<crate::Socket> for OwnedSocket {
+    fn from(sock: crate::Socket) -> OwnedSocket {
+        // SAFETY: sock.into_raw() always returns a valid fd.
+        unsafe { OwnedSocket::from_raw_socket(sock.into_raw() as RawSocket) }
+    }
+}
+
+#[cfg_attr(docsrs, doc(cfg(windows)))]
 impl IntoRawSocket for crate::Socket {
     fn into_raw_socket(self) -> RawSocket {
         self.into_raw() as RawSocket
     }
 }
 
+#[cfg_attr(docsrs, doc(cfg(windows)))]
+impl From<OwnedSocket> for crate::Socket {
+    fn from(fd: OwnedSocket) -> crate::Socket {
+        // SAFETY: `OwnedFd` ensures the fd is valid.
+        unsafe { crate::Socket::from_raw_socket(fd.into_raw_socket()) }
+    }
+}
+
+#[cfg_attr(docsrs, doc(cfg(windows)))]
 impl FromRawSocket for crate::Socket {
     unsafe fn from_raw_socket(socket: RawSocket) -> crate::Socket {
         crate::Socket::from_raw(socket as Socket)

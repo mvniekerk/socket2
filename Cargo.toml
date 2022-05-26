@@ -1,6 +1,7 @@
 [package]
 name          = "socket2"
-version       = "0.4.5"
+version       = "0.4.7"
+publish       = false
 authors       = [
   "Alex Crichton <alex@alexcrichton.com>",
   "Thomas de Zeeuw <thomasdezeeuw@gmail.com>"
@@ -32,8 +33,8 @@ rustdoc-args = ["--cfg", "docsrs"]
 [package.metadata.playground]
 features = ["all"]
 
-[target."cfg(unix)".dependencies]
-libc = "0.2.124"
+[target.'cfg(any(unix, target_os = "wasi"))'.dependencies]
+libc = { git = "https://github.com/wasix-org/libc.git" }
 
 [target.'cfg(windows)'.dependencies.windows-sys]
 version = "0.36"
