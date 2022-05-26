@@ -34,8 +34,8 @@ targets = ["aarch64-apple-ios", "aarch64-linux-android", "x86_64-apple-darwin", 
 [package.metadata.playground]
 features = ["all"]
 
-[target."cfg(unix)".dependencies]
-libc = "0.2.141"
+[target.'cfg(any(unix, target_os = "wasi"))'.dependencies]
+libc = { git = "https://github.com/wasix-org/libc.git" }
 
 [target.'cfg(windows)'.dependencies.windows-sys]
 version = "0.48"
