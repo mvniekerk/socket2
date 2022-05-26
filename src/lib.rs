@@ -51,7 +51,8 @@
 //! that are not available on all OSs.
 
 #![doc(html_root_url = "https://docs.rs/socket2/0.4")]
-#![deny(missing_docs, missing_debug_implementations, rust_2018_idioms)]
+#![deny(missing_docs, rust_2018_idioms)]
+#![cfg_attr(not(target_os = "wasi"), deny(missing_debug_implementations))]
 // Show required OS/features on docs.rs.
 #![cfg_attr(docsrs, feature(doc_cfg))]
 // Disallow warnings when running tests.
@@ -102,7 +103,7 @@ macro_rules! from {
     ($from: ty, $for: ty) => {
         impl From<$from> for $for {
             fn from(socket: $from) -> $for {
-                #[cfg(unix)]
+                #[cfg(any(unix, target_os="wasi"))]
                 unsafe {
                     <$for>::from_raw_fd(socket.into_raw_fd())
                 }
@@ -171,9 +172,10 @@ mod sockref;
 
 #[cfg_attr(unix, path = "sys/unix.rs")]
 #[cfg_attr(windows, path = "sys/windows.rs")]
+#[cfg_attr(target_os = "wasi", path = "sys/wasi.rs")]
 mod sys;
 
-#[cfg(not(any(windows, unix)))]
+#[cfg(not(any(windows, unix, target_os = "wasi")))]
 compile_error!("Socket2 doesn't support the compile target");
 
 use sys::c_int;
@@ -250,12 +252,12 @@ impl Type {
     /// Type corresponding to `SOCK_STREAM`.
     ///
     /// Used for protocols such as TCP.
-    pub const STREAM: Type = Type(sys::SOCK_STREAM);
+    pub const STREAM: Type = Type(sys::SOCK_STREAM as i32);
 
     /// Type corresponding to `SOCK_DGRAM`.
     ///
     /// Used for protocols such as UDP.
-    pub const DGRAM: Type = Type(sys::SOCK_DGRAM);
+    pub const DGRAM: Type = Type(sys::SOCK_DGRAM as i32);
 
     /// Type corresponding to `SOCK_DCCP`.
     ///
@@ -496,6 +498,7 @@ impl TcpKeepalive {
             target_os = "tvos",
             target_os = "watchos",
             target_os = "windows",
+            target_os = "wasi",
         )))
     )]
     pub const fn with_interval(self, interval: Duration) -> Self {
@@ -520,6 +523,7 @@ impl TcpKeepalive {
             target_os = "ios",
             target_os = "linux",
             target_os = "macos",
+            target_os = "wasi",
             target_os = "netbsd",
             target_os = "tvos",
             target_os = "watchos",
@@ -538,6 +542,7 @@ impl TcpKeepalive {
                 target_os = "ios",
                 target_os = "linux",
                 target_os = "macos",
+                target_os = "wasi",
                 target_os = "netbsd",
                 target_os = "tvos",
                 target_os = "watchos",
