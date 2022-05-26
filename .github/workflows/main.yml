@@ -15,14 +15,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        build: [stable, 1.46.0, beta, nightly, macos, windows]
+        build: [stable, 1.63.0, beta, nightly, macos, windows]
         include:
           - build: stable
             os: ubuntu-latest
             rust: stable
-          - build: 1.46.0
+          - build: 1.63.0
             os: ubuntu-latest
-            rust: 1.46.0
+            rust: 1.63.0
           - build: beta
             os: ubuntu-latest
             rust: beta
@@ -60,9 +60,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # TODO: add the following targets, currently broken.
-        # "x86_64-unknown-redox"
-        target: ["aarch64-apple-ios", "aarch64-linux-android", "x86_64-apple-darwin", "x86_64-fuchsia", "x86_64-pc-windows-msvc", "x86_64-pc-solaris", "x86_64-unknown-illumos", "x86_64-unknown-linux-gnu", "x86_64-unknown-netbsd"]
+        target: ["aarch64-apple-ios", "aarch64-linux-android", "x86_64-apple-darwin", "x86_64-fuchsia", "x86_64-pc-windows-msvc", "x86_64-pc-solaris", "x86_64-unknown-illumos", "x86_64-unknown-linux-gnu", "x86_64-unknown-netbsd", "x86_64-unknown-redox"]
     steps:
     - uses: actions/checkout@master
     - name: Install Rust
@@ -70,17 +68,14 @@ jobs:
     - uses: taiki-e/install-action@cargo-hack
     - name: Install Target
       run: rustup target add ${{ matrix.target }}
+    - name: Install cargo-hack
+      uses: taiki-e/install-action@cargo-hack
     - name: Run check
       run: cargo hack check --feature-powerset --all-targets --examples --bins --tests --target ${{ matrix.target }}
 
-  # Redox needs a nightly compiler for libc:
-  # https://github.com/rust-lang/libc/issues/2012
-  Check_Redox:
-    name: Check
+  Clippy:
+    name: Clippy
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        target: ["x86_64-unknown-redox"]
     steps:
     - uses: actions/checkout@master
     - name: Install Rust nightly

@@ -32,8 +32,8 @@ rustdoc-args = ["--cfg", "docsrs"]
 [package.metadata.playground]
 features = ["all"]
 
-[target."cfg(unix)".dependencies]
-libc = "0.2.139"
+[target.'cfg(any(unix, target_os = "wasi"))'.dependencies]
+libc = { git = "https://github.com/wasix-org/libc.git" }
 
 [target."cfg(windows)".dependencies]
 winapi = { version = "0.3.9", features = ["handleapi", "ws2ipdef", "ws2tcpip"] }
