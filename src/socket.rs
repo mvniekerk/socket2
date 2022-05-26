@@ -16,6 +16,8 @@ use std::net::{self, Ipv4Addr, Ipv6Addr, Shutdown};
 use std::os::unix::io::{FromRawFd, IntoRawFd};
 #[cfg(windows)]
 use std::os::windows::io::{FromRawSocket, IntoRawSocket};
+#[cfg(target_os = "wasi")]
+use std::os::wasi::io::{FromRawFd, IntoRawFd};
 use std::time::Duration;
 
 use crate::sys::{self, c_int, getsockopt, setsockopt, Bool};
@@ -99,7 +101,7 @@ impl Socket {
                 // Violating this assumption (fd never negative) causes UB,
                 // something we don't want. So check for that we have this
                 // `assert!`.
-                #[cfg(unix)]
+                #[cfg(any(unix, target_os = "wasi"))]
                 assert!(raw >= 0, "tried to create a `Socket` with an invalid fd");
                 sys::socket_from_raw(raw)
             },
@@ -226,7 +228,7 @@ impl Socket {
         match res {
             Ok(()) => return Ok(()),
             Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {}
-            #[cfg(unix)]
+            #[cfg(any(unix, target_os = "wasi"))]
             Err(ref e) if e.raw_os_error() == Some(libc::EINPROGRESS) => {}
             Err(e) => return Err(e),
         }
@@ -262,6 +264,7 @@ impl Socket {
             target_os = "fuchsia",
             target_os = "illumos",
             target_os = "linux",
+            target_os = "wasi",
             target_os = "netbsd",
             target_os = "openbsd",
         ))]
@@ -275,6 +278,7 @@ impl Socket {
             target_os = "fuchsia",
             target_os = "illumos",
             target_os = "linux",
+            target_os = "wasi",
             target_os = "netbsd",
             target_os = "openbsd",
         )))]
@@ -674,6 +678,7 @@ fn set_common_type(ty: Type) -> Type {
         target_os = "fuchsia",
         target_os = "illumos",
         target_os = "linux",
+        target_os = "wasi",
         target_os = "netbsd",
         target_os = "openbsd",
     ))]
@@ -700,6 +705,7 @@ fn set_common_flags(socket: Socket) -> io::Result<Socket> {
             target_os = "fuchsia",
             target_os = "illumos",
             target_os = "linux",
+            target_os = "wasi",
             target_os = "netbsd",
             target_os = "openbsd",
         ))
@@ -1019,7 +1025,7 @@ impl Socket {
     #[cfg_attr(docsrs, doc(all(feature = "all", not(target_os = "redox"))))]
     pub fn header_included(&self) -> io::Result<bool> {
         unsafe {
-            getsockopt::<c_int>(self.as_raw(), sys::IPPROTO_IP, sys::IP_HDRINCL)
+            getsockopt::<c_int>(self.as_raw(), sys::IPPROTO_IP, libc::IP_HDRINCL)
                 .map(|included| included != 0)
         }
     }
@@ -1042,7 +1048,7 @@ impl Socket {
             setsockopt(
                 self.as_raw(),
                 sys::IPPROTO_IP,
-                sys::IP_HDRINCL,
+                libc::IP_HDRINCL,
                 included as c_int,
             )
         }
@@ -1670,6 +1676,7 @@ impl Socket {
             target_os = "fuchsia",
             target_os = "illumos",
             target_os = "linux",
+            target_os = "wasi",
             target_os = "netbsd",
             target_vendor = "apple",
         )
@@ -1685,6 +1692,7 @@ impl Socket {
                 target_os = "fuchsia",
                 target_os = "illumos",
                 target_os = "linux",
+                target_os = "wasi",
                 target_os = "netbsd",
                 target_vendor = "apple",
             )
@@ -1712,6 +1720,7 @@ impl Socket {
             target_os = "fuchsia",
             target_os = "illumos",
             target_os = "linux",
+            target_os = "wasi",
             target_os = "netbsd",
             target_vendor = "apple",
         )
@@ -1727,6 +1736,7 @@ impl Socket {
                 target_os = "fuchsia",
                 target_os = "illumos",
                 target_os = "linux",
+                target_os = "wasi",
                 target_os = "netbsd",
                 target_vendor = "apple",
             )

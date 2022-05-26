@@ -6,6 +6,8 @@ use std::ops::Deref;
 use std::os::unix::io::{AsRawFd, FromRawFd};
 #[cfg(windows)]
 use std::os::windows::io::{AsRawSocket, FromRawSocket};
+#[cfg(target_os = "wasi")]
+use std::os::wasi::io::{AsRawFd, FromRawFd};
 
 use crate::Socket;
 
@@ -101,8 +103,8 @@ impl<'s> Deref for SockRef<'s> {
 }
 
 /// On Windows, a corresponding `From<&impl AsRawSocket>` implementation exists.
-#[cfg(unix)]
-#[cfg_attr(docsrs, doc(cfg(unix)))]
+#[cfg(any(unix, target_os = "wasi"))]
+#[cfg_attr(docsrs, doc(cfg(any(unix, target_os = "wasi"))))]
 impl<'s, S> From<&'s S> for SockRef<'s>
 where
     S: AsRawFd,

@@ -156,7 +156,7 @@ impl SockAddr {
     }
 
     /// Returns a raw pointer to the address storage.
-    #[cfg(all(unix, not(target_os = "redox")))]
+    #[cfg(all(any(unix, target_os = "wasi"), not(target_os = "redox")))]
     pub(crate) const fn as_storage_ptr(&self) -> *const sockaddr_storage {
         &self.storage
     }
@@ -181,7 +181,7 @@ impl SockAddr {
                 ip,
                 port,
                 addr.sin6_flowinfo,
-                #[cfg(unix)]
+                #[cfg(any(unix, all(target_os = "wasi", target_vendor = "wasmer")))]
                 addr.sin6_scope_id,
                 #[cfg(windows)]
                 unsafe {
@@ -256,7 +256,7 @@ impl From<SocketAddrV6> for SockAddr {
             sin6_port: addr.port().to_be(),
             sin6_addr: crate::sys::to_in6_addr(addr.ip()),
             sin6_flowinfo: addr.flowinfo(),
-            #[cfg(unix)]
+            #[cfg(any(unix, all(target_os = "wasi", target_vendor = "wasmer")))]
             sin6_scope_id: addr.scope_id(),
             #[cfg(windows)]
             Anonymous: SOCKADDR_IN6_0 {
