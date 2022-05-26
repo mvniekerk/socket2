@@ -295,6 +295,10 @@ const MAX_BUF_LEN: usize = c_int::MAX as usize - 1;
 #[cfg(all(feature = "all", any(target_os = "freebsd", target_os = "linux")))]
 const TCP_CA_NAME_MAX: usize = 16;
 
+// TCP_CA_NAME_MAX isn't defined in user space include files(not in libc)
+#[cfg(all(feature = "all", any(target_os = "freebsd", target_os = "linux")))]
+const TCP_CA_NAME_MAX: usize = 16;
+
 #[cfg(any(
     all(
         target_os = "linux",
@@ -647,7 +651,7 @@ pub(crate) fn unix_sockaddr(path: &Path) -> io::Result<SockAddr> {
 }
 
 // Used in `MsgHdr`.
-#[cfg(not(target_os = "redox"))]
+#[cfg(not(any(target_os = "redox", target_os = "wasi")))]
 pub(crate) use libc::msghdr;
 
 #[cfg(not(target_os = "redox"))]
@@ -1172,7 +1176,7 @@ fn fcntl_get(fd: Socket, cmd: c_int) -> io::Result<c_int> {
     syscall!(fcntl(fd, cmd))
 }
 
-/// Add `flag` to the current set flags of `F_GETFD`.
+//// Add `flag` to the current set flags of `F_GETFD`.
 fn fcntl_add(fd: Socket, get_cmd: c_int, set_cmd: c_int, flag: c_int) -> io::Result<()> {
     let previous = fcntl_get(fd, get_cmd)?;
     let new = previous | flag;

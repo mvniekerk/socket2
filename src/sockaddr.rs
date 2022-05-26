@@ -1,6 +1,7 @@
 use std::hash::Hash;
 use std::mem::{self, size_of, MaybeUninit};
 use std::net::{SocketAddr, SocketAddrV4, SocketAddrV6};
+#[cfg(not(target_os = "wasi"))]
 use std::path::Path;
 use std::{fmt, io, ptr};
 
@@ -146,6 +147,7 @@ impl SockAddr {
     /// Constructs a `SockAddr` with the family `AF_UNIX` and the provided path.
     ///
     /// Returns an error if the path is longer than `SUN_LEN`.
+    #[cfg(not(target_os = "wasi"))]
     pub fn unix<P>(path: P) -> io::Result<SockAddr>
     where
         P: AsRef<Path>,
@@ -204,6 +206,11 @@ impl SockAddr {
     pub fn is_unix(&self) -> bool {
         self.storage.ss_family == AF_UNIX as sa_family_t
     }
+    /// Returns a raw pointer to the address storage.
+    #[cfg(target_os = "wasi")]
+    pub(crate) const fn as_storage_ptr(&self) -> *const sockaddr_storage {
+        &self.storage
+    }
 
     /// Returns this address as a `SocketAddr` if it is in the `AF_INET` (IPv4)
     /// or `AF_INET6` (IPv6) family, otherwise returns `None`.
@@ -225,7 +232,7 @@ impl SockAddr {
                 ip,
                 port,
                 addr.sin6_flowinfo,
-                #[cfg(unix)]
+                #[cfg(any(unix, all(target_os = "wasi", target_vendor = "wasmer")))]
                 addr.sin6_scope_id,
                 #[cfg(windows)]
                 unsafe {
@@ -299,7 +306,7 @@ impl From<SocketAddrV6> for SockAddr {
             storage.sin6_port = addr.port().to_be();
             storage.sin6_addr = crate::sys::to_in6_addr(addr.ip());
             storage.sin6_flowinfo = addr.flowinfo();
-            #[cfg(unix)]
+            #[cfg(any(unix, all(target_os = "wasi", target_vendor = "wasmer")))]
             {
                 storage.sin6_scope_id = addr.scope_id();
             }

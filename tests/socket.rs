@@ -9,6 +9,7 @@
         target_os = "macos",
         target_os = "tvos",
         target_os = "watchos",
+        target_os = "wasi",
     )
 ))]
 use std::fs::File;
@@ -31,6 +32,7 @@ use std::net::{Ipv6Addr, SocketAddrV6};
         target_os = "macos",
         target_os = "tvos",
         target_os = "watchos",
+        target_os = "wasi",
     )
 ))]
 use std::num::NonZeroUsize;
@@ -38,7 +40,7 @@ use std::num::NonZeroUsize;
 use std::os::unix::io::AsRawFd;
 #[cfg(windows)]
 use std::os::windows::io::AsRawSocket;
-#[cfg(unix)]
+#[cfg(any(unix, target_os = "wasi"))]
 use std::path::Path;
 use std::str;
 use std::thread;
@@ -69,9 +71,9 @@ fn domain_fmt_debug() {
         (Domain::IPV4, "AF_INET"),
         (Domain::IPV6, "AF_INET6"),
         (Domain::UNIX, "AF_UNIX"),
-        #[cfg(all(feature = "all", any(target_os = "fuchsia", target_os = "linux")))]
+        #[cfg(all(feature = "all", any(target_os = "fuchsia", target_os = "linux", target_os = "wasi")))]
         (Domain::PACKET, "AF_PACKET"),
-        #[cfg(all(feature = "all", any(target_os = "android", target_os = "linux")))]
+        #[cfg(all(feature = "all", any(target_os = "android", target_os = "linux", target_os = "wasi")))]
         (Domain::VSOCK, "AF_VSOCK"),
         (0.into(), "AF_UNSPEC"),
         (500.into(), "500"),
@@ -179,7 +181,7 @@ fn socket_address_unix_unnamed() {
 }
 
 #[test]
-#[cfg(all(any(target_os = "linux", target_os = "android"), feature = "all"))]
+#[cfg(all(any(target_os = "linux", target_os = "android", target_os = "wasi"), feature = "all"))]
 fn socket_address_unix_abstract_namespace() {
     let path = "\0h".repeat(108 / 2);
     let addr = SockAddr::unix(&path).unwrap();
@@ -195,7 +197,7 @@ fn socket_address_unix_abstract_namespace() {
 }
 
 #[test]
-#[cfg(all(feature = "all", any(target_os = "android", target_os = "linux")))]
+#[cfg(all(feature = "all", any(target_os = "android", target_os = "linux", target_os = "wasi")))]
 fn socket_address_vsock() {
     let addr = SockAddr::vsock(1, 9999);
     assert!(addr.as_socket_ipv4().is_none());
@@ -267,6 +269,7 @@ fn no_common_flags() {
         target_os = "freebsd",
         target_os = "fuchsia",
         target_os = "linux",
+        target_os = "wasi",
         target_os = "netbsd",
         target_os = "openbsd"
     )
@@ -318,6 +321,7 @@ fn set_cloexec() {
         target_os = "freebsd",
         target_os = "fuchsia",
         target_os = "linux",
+        target_os = "wasi",
         target_os = "netbsd",
         target_os = "openbsd"
     )
@@ -540,7 +544,7 @@ fn unix() {
 }
 
 #[test]
-#[cfg(all(feature = "all", any(target_os = "android", target_os = "linux")))]
+#[cfg(all(feature = "all", any(target_os = "android", target_os = "linux", target_os = "wasi")))]
 #[ignore = "using VSOCK family requires optional kernel support (works when enabled)"]
 fn vsock() {
     let addr = SockAddr::vsock(libc::VMADDR_CID_LOCAL, libc::VMADDR_PORT_ANY);
@@ -822,6 +826,7 @@ fn tcp_keepalive() {
             target_os = "ios",
             target_os = "linux",
             target_os = "macos",
+            target_os = "wasi",
             target_os = "netbsd",
             target_os = "tvos",
             target_os = "watchos",
@@ -839,6 +844,7 @@ fn tcp_keepalive() {
             target_os = "ios",
             target_os = "linux",
             target_os = "macos",
+            target_os = "wasi",
             target_os = "netbsd",
             target_os = "tvos",
             target_os = "watchos",
@@ -866,6 +872,7 @@ fn tcp_keepalive() {
             target_os = "ios",
             target_os = "linux",
             target_os = "macos",
+            target_os = "wasi",
             target_os = "netbsd",
             target_os = "tvos",
             target_os = "watchos",
@@ -887,6 +894,7 @@ fn tcp_keepalive() {
             target_os = "ios",
             target_os = "linux",
             target_os = "macos",
+            target_os = "wasi",
             target_os = "netbsd",
             target_os = "tvos",
             target_os = "watchos",
@@ -1029,6 +1037,7 @@ fn device_v6() {
         target_os = "macos",
         target_os = "tvos",
         target_os = "watchos",
+        target_os = "wasi",
     )
 ))]
 #[test]
@@ -1103,6 +1112,7 @@ fn sendfile() {
         target_os = "freebsd",
         target_os = "fuchsia",
         target_os = "linux",
+        target_os = "wasi",
     )
 ))]
 #[test]
@@ -1122,6 +1132,7 @@ fn is_listener() {
         // target_os = "freebsd",
         target_os = "fuchsia",
         target_os = "linux",
+        target_os = "wasi",
     )
 ))]
 #[test]
@@ -1143,6 +1154,7 @@ fn domain() {
         target_os = "freebsd",
         target_os = "fuchsia",
         target_os = "linux",
+        target_os = "wasi",
     )
 ))]
 #[test]
@@ -1190,7 +1202,7 @@ fn r#type() {
     }
 }
 
-#[cfg(all(feature = "all", target_os = "linux"))]
+#[cfg(all(feature = "all", target_os = "linux", target_os = "wasi"))]
 #[test]
 fn cpu_affinity() {
     let socket = Socket::new(Domain::IPV4, Type::STREAM, None).unwrap();
