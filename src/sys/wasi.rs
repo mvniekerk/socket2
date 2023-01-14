@@ -1193,9 +1193,23 @@ impl AsRawFd for crate::Socket {
     }
 }
 
+impl From<crate::Socket> for OwnedFd {
+    fn from(sock: crate::Socket) -> OwnedFd {
+        // SAFETY: sock.into_raw() always returns a valid fd.
+        unsafe { OwnedFd::from_raw_fd(sock.into_raw()) }
+    }
+}
+
 impl IntoRawFd for crate::Socket {
     fn into_raw_fd(self) -> c_int {
         self.into_raw()
+    }
+}
+
+impl From<OwnedFd> for crate::Socket {
+    fn from(fd: OwnedFd) -> crate::Socket {
+        // SAFETY: `OwnedFd` ensures the fd is valid.
+        unsafe { crate::Socket::from_raw_fd(fd.into_raw_fd()) }
     }
 }
 
