@@ -8,7 +8,7 @@ use std::net::{Ipv4Addr, Ipv6Addr};
 use std::num::NonZeroUsize;
 use std::num::NonZeroU32;
 use std::os::wasi::io::RawFd;
-use std::os::wasi::io::{AsRawFd, FromRawFd, IntoRawFd};
+use std::os::wasi::io::{AsFd, AsRawFd, BorrowedFd, FromRawFd, IntoRawFd, OwnedFd};
 use std::path::Path;
 use std::ptr;
 use std::time::{Duration, Instant};
@@ -1177,6 +1177,13 @@ impl crate::Socket {
     /// For more information about this option, see [`attach_filter`]
     pub fn detach_filter(&self) -> io::Result<()> {
         unsafe { setsockopt(self.as_raw(), libc::SOL_SOCKET, libc::SO_DETACH_FILTER, 0) }
+    }
+}
+
+impl AsFd for crate::Socket {
+    fn as_fd(&self) -> BorrowedFd<'_> {
+        // SAFETY: lifetime is bound by self.
+        unsafe { BorrowedFd::borrow_raw(self.as_raw()) }
     }
 }
 
