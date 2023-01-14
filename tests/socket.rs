@@ -13,7 +13,6 @@ use std::fs::File;
 use std::io;
 #[cfg(not(target_os = "redox"))]
 use std::io::IoSlice;
-#[cfg(all(unix, feature = "all"))]
 use std::io::Read;
 use std::io::Write;
 use std::mem::{self, MaybeUninit};
@@ -40,7 +39,6 @@ use std::os::wasi::io::AsRawFd;
 use std::str;
 use std::thread;
 use std::time::Duration;
-#[cfg(all(unix, feature = "all"))]
 use std::{env, fs};
 
 #[cfg(windows)]
@@ -66,7 +64,6 @@ fn domain_fmt_debug() {
     let tests = &[
         (Domain::IPV4, "AF_INET"),
         (Domain::IPV6, "AF_INET6"),
-        #[cfg(unix)]
         (Domain::UNIX, "AF_UNIX"),
         #[cfg(all(feature = "all", any(target_os = "fuchsia", target_os = "linux", target_os = "wasi")))]
         (Domain::PACKET, "AF_PACKET"),
@@ -113,6 +110,10 @@ fn protocol_fmt_debug() {
         (Protocol::ICMPV6, "IPPROTO_ICMPV6"),
         (Protocol::TCP, "IPPROTO_TCP"),
         (Protocol::UDP, "IPPROTO_UDP"),
+        #[cfg(target_os = "linux")]
+        (Protocol::MPTCP, "IPPROTO_MPTCP"),
+        #[cfg(all(feature = "all", any(target_os = "freebsd", target_os = "linux")))]
+        (Protocol::SCTP, "IPPROTO_SCTP"),
         (500.into(), "500"),
     ];
 
@@ -134,7 +135,6 @@ fn from_invalid_raw_fd_should_panic() {
 }
 
 #[test]
-#[cfg(all(unix, feature = "all"))]
 fn socket_address_unix() {
     let string = "/tmp/socket";
     let addr = SockAddr::unix(string).unwrap();
@@ -156,10 +156,10 @@ fn socket_address_unix_abstract_namespace() {
 #[test]
 #[cfg(all(feature = "all", any(target_os = "android", target_os = "linux", target_os = "wasi")))]
 fn socket_address_vsock() {
-    let addr = SockAddr::vsock(1, 9999).unwrap();
+    let addr = SockAddr::vsock(1, 9999);
     assert!(addr.as_socket_ipv4().is_none());
     assert!(addr.as_socket_ipv6().is_none());
-    assert_eq!(addr.vsock_address().unwrap(), (1, 9999));
+    assert_eq!(addr.as_vsock_address().unwrap(), (1, 9999));
 }
 
 #[test]
@@ -236,17 +236,19 @@ fn type_nonblocking() {
 /// Assert that `NONBLOCK` is set on `socket`.
 #[cfg(unix)]
 #[track_caller]
-pub fn assert_nonblocking<S>(socket: &S, want: bool)
-where
-    S: AsRawFd,
-{
-    let flags = unsafe { libc::fcntl(socket.as_raw_fd(), libc::F_GETFL) };
-    assert_eq!(flags & libc::O_NONBLOCK != 0, want, "non-blocking option");
+pub fn assert_nonblocking(socket: &Socket, want: bool) {
+    #[cfg(all(feature = "all", unix))]
+    assert_eq!(socket.nonblocking().unwrap(), want, "non-blocking option");
+    #[cfg(not(all(feature = "all", unix)))]
+    {
+        let flags = unsafe { libc::fcntl(socket.as_raw_fd(), libc::F_GETFL) };
+        assert_eq!(flags & libc::O_NONBLOCK != 0, want, "non-blocking option");
+    }
 }
 
 #[cfg(windows)]
 #[track_caller]
-pub fn assert_nonblocking<S>(_: &S, _: bool) {
+pub fn assert_nonblocking(_: &Socket, _: bool) {
     // No way to get this information...
 }
 
@@ -435,9 +437,29 @@ fn pair() {
     assert_eq!(&buf[..n], DATA);
 }
 
+fn unix_sockets_supported() -> bool {
+    #[cfg(windows)]
+    {
+        // Only some versions of Windows support Unix sockets.
+        match Socket::new(Domain::UNIX, Type::STREAM, None) {
+            Ok(_) => {}
+            Err(err)
+                if err.raw_os_error()
+                    == Some(windows_sys::Win32::Networking::WinSock::WSAEAFNOSUPPORT as i32) =>
+            {
+                return false;
+            }
+            Err(err) => panic!("socket error: {}", err),
+        }
+    }
+    true
+}
+
 #[test]
-#[cfg(all(feature = "all", unix))]
 fn unix() {
+    if !unix_sockets_supported() {
+        return;
+    }
     let mut path = env::temp_dir();
     path.push("socket2");
     let _ = fs::remove_dir_all(&path);
@@ -465,14 +487,14 @@ fn unix() {
 #[cfg(all(feature = "all", any(target_os = "android", target_os = "linux", target_os = "wasi")))]
 #[ignore = "using VSOCK family requires optional kernel support (works when enabled)"]
 fn vsock() {
-    let addr = SockAddr::vsock(libc::VMADDR_CID_LOCAL, libc::VMADDR_PORT_ANY).unwrap();
+    let addr = SockAddr::vsock(libc::VMADDR_CID_LOCAL, libc::VMADDR_PORT_ANY);
 
     let listener = Socket::new(Domain::VSOCK, Type::STREAM, None).unwrap();
     listener.bind(&addr).unwrap();
     listener.listen(10).unwrap();
 
-    let (_, port) = listener.local_addr().unwrap().vsock_address().unwrap();
-    let addr = SockAddr::vsock(libc::VMADDR_CID_LOCAL, port).unwrap();
+    let (_, port) = listener.local_addr().unwrap().as_vsock_address().unwrap();
+    let addr = SockAddr::vsock(libc::VMADDR_CID_LOCAL, port);
     let mut a = Socket::new(Domain::VSOCK, Type::STREAM, None).unwrap();
     a.connect(&addr).unwrap();
     let mut b = listener.accept().unwrap().0;
@@ -892,7 +914,7 @@ fn sendfile() {
         assert_eq!(n, HELLO_WORLD.data.len());
 
         let mut buf = Vec::with_capacity(HELLO_WORLD.data.len() + 1);
-        let n = receiver.recv(spare_capacity_mut(&mut buf)).unwrap();
+        let n = receiver.recv(buf.spare_capacity_mut()).unwrap();
         assert_eq!(n, HELLO_WORLD.data.len());
         unsafe { buf.set_len(n) };
         assert_eq!(buf, HELLO_WORLD.data);
@@ -913,32 +935,12 @@ fn sendfile() {
         let mut buf = Vec::with_capacity(LOREM.data.len() + 1);
         let mut total = 0;
         while total < LOREM.data.len() {
-            let n = receiver.recv(spare_capacity_mut(&mut buf)).unwrap();
+            let n = receiver.recv(buf.spare_capacity_mut()).unwrap();
             unsafe { buf.set_len(buf.len() + n) };
             total += n;
         }
         assert_eq!(total, LOREM.data.len());
         assert_eq!(buf, LOREM.data);
-    }
-}
-
-// TODO: use `Vec::spare_capacity_mut` once stable.
-#[cfg(all(
-    feature = "all",
-    any(
-        target_os = "android",
-        target_os = "freebsd",
-        target_os = "linux",
-        target_os = "wasi",
-        target_vendor = "apple",
-    )
-))]
-fn spare_capacity_mut(buf: &mut Vec<u8>) -> &mut [MaybeUninit<u8>] {
-    unsafe {
-        std::slice::from_raw_parts_mut(
-            buf.as_mut_ptr().add(buf.len()) as *mut MaybeUninit<u8>,
-            buf.capacity() - buf.len(),
-        )
     }
 }
 
@@ -1037,7 +1039,7 @@ fn cpu_affinity() {
 
     // NOTE: This requires at least 2 CPU cores.
     let cpu = socket.cpu_affinity().unwrap();
-    let want = if cpu == 0 { 1 } else { 0 };
+    let want = usize::from(cpu == 0);
 
     socket.set_cpu_affinity(want).unwrap();
     assert_eq!(socket.cpu_affinity().unwrap(), want);
@@ -1186,9 +1188,11 @@ test!(IPv4 ttl, set_ttl(40));
 test!(IPv4 tos, set_tos(96));
 
 #[cfg(not(any(
+    target_os = "dragonfly",
     target_os = "fuchsia",
     target_os = "illumos",
     target_os = "netbsd",
+    target_os = "openbsd",
     target_os = "redox",
     target_os = "solaris",
     target_os = "windows",
@@ -1199,11 +1203,43 @@ test!(IPv4 recv_tos, set_recv_tos(true));
 test!(IPv4 broadcast, set_broadcast(true));
 
 test!(IPv6 unicast_hops_v6, set_unicast_hops_v6(20));
-#[cfg(not(any(windows, any(target_os = "dragonfly", target_os = "freebsd"))))]
+#[cfg(not(any(
+    windows,
+    target_os = "dragonfly",
+    target_os = "freebsd",
+    target_os = "openbsd"
+)))]
 test!(IPv6 only_v6, set_only_v6(true));
 // IPv6 socket are already IPv6 only on FreeBSD and Windows.
-#[cfg(any(windows, any(target_os = "freebsd")))]
+#[cfg(any(windows, target_os = "freebsd"))]
 test!(IPv6 only_v6, set_only_v6(false));
+
+#[cfg(all(
+    feature = "all",
+    any(
+        target_os = "android",
+        target_os = "dragonfly",
+        target_os = "freebsd",
+        target_os = "fuchsia",
+        target_os = "linux",
+        target_os = "macos",
+        target_os = "netbsd",
+        target_os = "openbsd"
+    )
+))]
+test!(IPv6 tclass_v6, set_tclass_v6(96));
+
+#[cfg(not(any(
+    target_os = "dragonfly",
+    target_os = "fuchsia",
+    target_os = "illumos",
+    target_os = "netbsd",
+    target_os = "openbsd",
+    target_os = "redox",
+    target_os = "solaris",
+    target_os = "windows",
+)))]
+test!(IPv6 recv_tclass_v6, set_recv_tclass_v6(true));
 
 #[cfg(all(
     feature = "all",
@@ -1219,6 +1255,7 @@ test!(
     target_os = "haiku",
     target_os = "illumos",
     target_os = "netbsd",
+    target_os = "openbsd",
     target_os = "redox",
     target_os = "solaris",
 )))]
@@ -1234,18 +1271,20 @@ fn join_leave_multicast_v4_n() {
             assert_eq!(err.raw_os_error(), Some(libc::EADDRNOTAVAIL));
         }
     };
-    let () = socket
+    socket
         .join_multicast_v4_n(&multiaddr, &interface)
         .expect("join multicast group");
-    let () = socket
+    socket
         .leave_multicast_v4_n(&multiaddr, &interface)
         .expect("leave multicast group");
 }
 
 #[test]
 #[cfg(not(any(
+    target_os = "dragonfly",
     target_os = "haiku",
     target_os = "netbsd",
+    target_os = "openbsd",
     target_os = "redox",
     target_os = "fuchsia",
 )))]
@@ -1254,8 +1293,8 @@ fn join_leave_ssm_v4() {
     let g = Ipv4Addr::new(232, 123, 52, 36);
     let s = Ipv4Addr::new(62, 40, 109, 31);
     let interface = Ipv4Addr::new(0, 0, 0, 0);
-    let () = socket.join_ssm_v4(&s, &g, &interface).expect("Joined SSM");
-    let () = socket.leave_ssm_v4(&s, &g, &interface).expect("Left SSM");
+    socket.join_ssm_v4(&s, &g, &interface).expect("Joined SSM");
+    socket.leave_ssm_v4(&s, &g, &interface).expect("Left SSM");
 }
 
 #[test]
@@ -1280,4 +1319,86 @@ fn header_included() {
         .expect("failed to set option");
     let got = socket.header_included().expect("failed to get value");
     assert_eq!(got, true, "set and get values differ");
+}
+
+#[test]
+#[cfg(all(
+    feature = "all",
+    any(target_os = "android", target_os = "fuchsia", target_os = "linux")
+))]
+fn original_dst() {
+    let socket = Socket::new(Domain::IPV4, Type::STREAM, None).unwrap();
+    match socket.original_dst() {
+        Ok(_) => panic!("original_dst on non-redirected socket should fail"),
+        Err(err) => assert_eq!(err.raw_os_error(), Some(libc::ENOENT)),
+    }
+
+    let socket = Socket::new(Domain::IPV6, Type::STREAM, None).unwrap();
+    match socket.original_dst() {
+        Ok(_) => panic!("original_dst on non-redirected socket should fail"),
+        Err(err) => assert_eq!(err.raw_os_error(), Some(libc::ENOENT)),
+    }
+}
+
+#[test]
+#[cfg(all(feature = "all", any(target_os = "android", target_os = "linux")))]
+fn original_dst_ipv6() {
+    let socket = Socket::new(Domain::IPV6, Type::STREAM, None).unwrap();
+    match socket.original_dst_ipv6() {
+        Ok(_) => panic!("original_dst_ipv6 on non-redirected socket should fail"),
+        Err(err) => assert_eq!(err.raw_os_error(), Some(libc::ENOENT)),
+    }
+
+    // Not supported on IPv4 socket.
+    let socket = Socket::new(Domain::IPV4, Type::STREAM, None).unwrap();
+    match socket.original_dst_ipv6() {
+        Ok(_) => panic!("original_dst_ipv6 on non-redirected socket should fail"),
+        Err(err) => assert_eq!(err.raw_os_error(), Some(libc::EOPNOTSUPP)),
+    }
+}
+
+#[test]
+#[cfg(all(feature = "all", any(target_os = "freebsd", target_os = "linux")))]
+fn tcp_congestion() {
+    let socket: Socket = Socket::new(Domain::IPV4, Type::STREAM, None).unwrap();
+    // Get and set current tcp_ca
+    let origin_tcp_ca = socket
+        .tcp_congestion()
+        .expect("failed to get tcp congestion algorithm");
+    socket
+        .set_tcp_congestion(&origin_tcp_ca)
+        .expect("failed to set tcp congestion algorithm");
+    // Return a Err when set a non-exist tcp_ca
+    socket
+        .set_tcp_congestion(b"tcp_congestion_does_not_exist")
+        .unwrap_err();
+    let cur_tcp_ca = socket.tcp_congestion().unwrap();
+    assert_eq!(
+        cur_tcp_ca, origin_tcp_ca,
+        "expected {origin_tcp_ca:?} but get {cur_tcp_ca:?}"
+    );
+    let cur_tcp_ca = cur_tcp_ca.splitn(2, |num| *num == 0).next().unwrap();
+    const OPTIONS: [&[u8]; 2] = [
+        b"cubic",
+        #[cfg(target_os = "linux")] // or Android.
+        b"reno",
+        #[cfg(target_os = "freebsd")]
+        b"newreno",
+    ];
+    // Set a new tcp ca
+    #[cfg(target_os = "linux")]
+    let new_tcp_ca = if cur_tcp_ca == OPTIONS[0] {
+        OPTIONS[1]
+    } else {
+        OPTIONS[0]
+    };
+    #[cfg(target_os = "freebsd")]
+    let new_tcp_ca = OPTIONS[1];
+    socket.set_tcp_congestion(new_tcp_ca).unwrap();
+    // Check if new tcp ca is successfully set
+    let cur_tcp_ca = socket.tcp_congestion().unwrap();
+    assert_eq!(
+        cur_tcp_ca.splitn(2, |num| *num == 0).next().unwrap(),
+        new_tcp_ca,
+    );
 }

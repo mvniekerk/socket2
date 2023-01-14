@@ -25,7 +25,6 @@ use std::num::NonZeroU32;
     )
 ))]
 use std::num::NonZeroUsize;
-#[cfg(feature = "all")]
 use std::os::unix::ffi::OsStrExt;
 #[cfg(all(
     feature = "all",
@@ -37,19 +36,17 @@ use std::os::unix::ffi::OsStrExt;
     )
 ))]
 use std::os::unix::io::RawFd;
-use std::os::unix::io::{AsRawFd, FromRawFd, IntoRawFd};
+use std::os::unix::io::{AsFd, AsRawFd, BorrowedFd, FromRawFd, IntoRawFd, OwnedFd};
 #[cfg(feature = "all")]
 use std::os::unix::net::{UnixDatagram, UnixListener, UnixStream};
-#[cfg(feature = "all")]
 use std::path::Path;
-#[cfg(not(all(target_os = "redox", not(feature = "all"))))]
 use std::ptr;
 use std::time::{Duration, Instant};
 use std::{io, slice};
 
 #[cfg(not(target_vendor = "apple"))]
 use libc::ssize_t;
-use libc::{c_void, in6_addr, in_addr};
+use libc::{in6_addr, in_addr};
 
 #[cfg(not(target_os = "redox"))]
 use crate::RecvFlags;
@@ -58,7 +55,7 @@ use crate::{Domain, Protocol, SockAddr, TcpKeepalive, Type};
 pub(crate) use libc::c_int;
 
 // Used in `Domain`.
-pub(crate) use libc::{AF_INET, AF_INET6};
+pub(crate) use libc::{AF_INET, AF_INET6, AF_UNIX};
 // Used in `Type`.
 #[cfg(all(feature = "all", not(target_os = "redox")))]
 pub(crate) use libc::SOCK_RAW;
@@ -66,6 +63,10 @@ pub(crate) use libc::SOCK_RAW;
 pub(crate) use libc::SOCK_SEQPACKET;
 pub(crate) use libc::{SOCK_DGRAM, SOCK_STREAM};
 // Used in `Protocol`.
+#[cfg(target_os = "linux")]
+pub(crate) use libc::IPPROTO_MPTCP;
+#[cfg(all(feature = "all", any(target_os = "freebsd", target_os = "linux")))]
+pub(crate) use libc::IPPROTO_SCTP;
 pub(crate) use libc::{IPPROTO_ICMP, IPPROTO_ICMPV6, IPPROTO_TCP, IPPROTO_UDP};
 // Used in `SockAddr`.
 pub(crate) use libc::{
@@ -75,15 +76,28 @@ pub(crate) use libc::{
 #[cfg(not(target_os = "redox"))]
 pub(crate) use libc::{MSG_TRUNC, SO_OOBINLINE};
 // Used in `Socket`.
-#[cfg(all(feature = "all", not(target_os = "redox")))]
-pub(crate) use libc::IP_HDRINCL;
 #[cfg(not(any(
+    target_os = "dragonfly",
     target_os = "fuchsia",
     target_os = "illumos",
     target_os = "netbsd",
     target_os = "openbsd",
     target_os = "redox",
     target_os = "solaris",
+    target_os = "haiku",
+)))]
+pub(crate) use libc::IPV6_RECVTCLASS;
+#[cfg(all(feature = "all", not(target_os = "redox")))]
+pub(crate) use libc::IP_HDRINCL;
+#[cfg(not(any(
+    target_os = "dragonfly",
+    target_os = "fuchsia",
+    target_os = "illumos",
+    target_os = "netbsd",
+    target_os = "openbsd",
+    target_os = "redox",
+    target_os = "solaris",
+    target_os = "haiku",
 )))]
 pub(crate) use libc::IP_RECVTOS;
 #[cfg(not(any(
@@ -105,8 +119,10 @@ pub(crate) use libc::{
     SO_RCVTIMEO, SO_REUSEADDR, SO_SNDBUF, SO_SNDTIMEO, SO_TYPE, TCP_NODELAY,
 };
 #[cfg(not(any(
+    target_os = "dragonfly",
     target_os = "haiku",
     target_os = "netbsd",
+    target_os = "openbsd",
     target_os = "redox",
     target_os = "fuchsia",
 )))]
@@ -188,6 +204,10 @@ const MAX_BUF_LEN: usize = ssize_t::MAX as usize;
 #[cfg(target_vendor = "apple")]
 const MAX_BUF_LEN: usize = c_int::MAX as usize - 1;
 
+// TCP_CA_NAME_MAX isn't defined in user space include files(not in libc)
+#[cfg(all(feature = "all", any(target_os = "freebsd", target_os = "linux")))]
+const TCP_CA_NAME_MAX: usize = 16;
+
 #[cfg(any(
     all(
         target_os = "linux",
@@ -222,10 +242,6 @@ type IovLen = c_int;
 
 /// Unix only API.
 impl Domain {
-    /// Domain for Unix socket communication, corresponding to `AF_UNIX`.
-    #[cfg_attr(docsrs, doc(cfg(unix)))]
-    pub const UNIX: Domain = Domain(libc::AF_UNIX);
-
     /// Domain for low-level packet interface, corresponding to `AF_PACKET`.
     #[cfg(all(
         feature = "all",
@@ -390,6 +406,10 @@ impl_debug!(
     libc::IPPROTO_ICMPV6,
     libc::IPPROTO_TCP,
     libc::IPPROTO_UDP,
+    #[cfg(target_os = "linux")]
+    libc::IPPROTO_MPTCP,
+    #[cfg(all(feature = "all", any(target_os = "freebsd", target_os = "linux")))]
+    libc::IPPROTO_SCTP,
 );
 
 /// Unix-only API.
@@ -397,11 +417,13 @@ impl_debug!(
 impl RecvFlags {
     /// Check if the message terminates a record.
     ///
-    /// Not all socket types support the notion of records.
-    /// For socket types that do support it (such as [`SEQPACKET`][Type::SEQPACKET]),
-    /// a record is terminated by sending a message with the end-of-record flag set.
+    /// Not all socket types support the notion of records. For socket types
+    /// that do support it (such as [`SEQPACKET`]), a record is terminated by
+    /// sending a message with the end-of-record flag set.
     ///
-    /// On Unix this corresponds to the MSG_EOR flag.
+    /// On Unix this corresponds to the `MSG_EOR` flag.
+    ///
+    /// [`SEQPACKET`]: Type::SEQPACKET
     pub const fn is_end_of_record(self) -> bool {
         self.0 & libc::MSG_EOR != 0
     }
@@ -411,7 +433,7 @@ impl RecvFlags {
     /// This is useful for protocols where you receive out-of-band data
     /// mixed in with the normal data stream.
     ///
-    /// On Unix this corresponds to the MSG_OOB flag.
+    /// On Unix this corresponds to the `MSG_OOB` flag.
     pub const fn is_out_of_band(self) -> bool {
         self.0 & libc::MSG_OOB != 0
     }
@@ -458,72 +480,54 @@ impl<'a> MaybeUninitSlice<'a> {
     }
 }
 
-/// Unix only API.
-impl SockAddr {
-    /// Constructs a `SockAddr` with the family `AF_UNIX` and the provided path.
-    ///
-    /// # Failure
-    ///
-    /// Returns an error if the path is longer than `SUN_LEN`.
-    #[cfg(feature = "all")]
-    #[cfg_attr(docsrs, doc(cfg(all(unix, feature = "all"))))]
-    #[allow(unused_unsafe)] // TODO: replace with `unsafe_op_in_unsafe_fn` once stable.
-    pub fn unix<P>(path: P) -> io::Result<SockAddr>
-    where
-        P: AsRef<Path>,
-    {
-        unsafe {
-            SockAddr::init(|storage, len| {
-                // Safety: `SockAddr::init` zeros the address, which is a valid
-                // representation.
-                let storage: &mut libc::sockaddr_un = unsafe { &mut *storage.cast() };
-                let len: &mut socklen_t = unsafe { &mut *len };
+#[allow(unsafe_op_in_unsafe_fn)]
+pub(crate) fn unix_sockaddr(path: &Path) -> io::Result<SockAddr> {
+    // SAFETY: a `sockaddr_storage` of all zeros is valid.
+    let mut storage = unsafe { mem::zeroed::<sockaddr_storage>() };
+    let len = {
+        let storage = unsafe { &mut *ptr::addr_of_mut!(storage).cast::<libc::sockaddr_un>() };
 
-                let bytes = path.as_ref().as_os_str().as_bytes();
-                let too_long = match bytes.first() {
-                    None => false,
-                    // linux abstract namespaces aren't null-terminated
-                    Some(&0) => bytes.len() > storage.sun_path.len(),
-                    Some(_) => bytes.len() >= storage.sun_path.len(),
-                };
-                if too_long {
-                    return Err(io::Error::new(
-                        io::ErrorKind::InvalidInput,
-                        "path must be shorter than SUN_LEN",
-                    ));
-                }
-
-                storage.sun_family = libc::AF_UNIX as sa_family_t;
-                // Safety: `bytes` and `addr.sun_path` are not overlapping and
-                // both point to valid memory.
-                // `SockAddr::init` zeroes the memory, so the path is already
-                // null terminated.
-                unsafe {
-                    ptr::copy_nonoverlapping(
-                        bytes.as_ptr(),
-                        storage.sun_path.as_mut_ptr() as *mut u8,
-                        bytes.len(),
-                    )
-                };
-
-                let base = storage as *const _ as usize;
-                let path = &storage.sun_path as *const _ as usize;
-                let sun_path_offset = path - base;
-                let length = sun_path_offset
-                    + bytes.len()
-                    + match bytes.first() {
-                        Some(&0) | None => 0,
-                        Some(_) => 1,
-                    };
-                *len = length as socklen_t;
-
-                Ok(())
-            })
+        let bytes = path.as_os_str().as_bytes();
+        let too_long = match bytes.first() {
+            None => false,
+            // linux abstract namespaces aren't null-terminated
+            Some(&0) => bytes.len() > storage.sun_path.len(),
+            Some(_) => bytes.len() >= storage.sun_path.len(),
+        };
+        if too_long {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "path must be shorter than SUN_LEN",
+            ));
         }
-        .map(|(_, addr)| addr)
-    }
+
+        storage.sun_family = libc::AF_UNIX as sa_family_t;
+        // SAFETY: `bytes` and `addr.sun_path` are not overlapping and
+        // both point to valid memory.
+        // `storage` was initialized to zero above, so the path is
+        // already NULL terminated.
+        unsafe {
+            ptr::copy_nonoverlapping(
+                bytes.as_ptr(),
+                storage.sun_path.as_mut_ptr().cast(),
+                bytes.len(),
+            );
+        }
+
+        let base = storage as *const _ as usize;
+        let path = ptr::addr_of!(storage.sun_path) as usize;
+        let sun_path_offset = path - base;
+        sun_path_offset
+            + bytes.len()
+            + match bytes.first() {
+                Some(&0) | None => 0,
+                Some(_) => 1,
+            }
+    };
+    Ok(unsafe { SockAddr::new(storage, len as socklen_t) })
 }
 
+/// Unix only API.
 impl SockAddr {
     /// Constructs a `SockAddr` with the family `AF_VSOCK` and the provided CID/port.
     ///
@@ -531,30 +535,23 @@ impl SockAddr {
     ///
     /// This function can never fail. In a future version of this library it will be made
     /// infallible.
-    #[allow(unused_unsafe)] // TODO: replace with `unsafe_op_in_unsafe_fn` once stable.
+    #[allow(unsafe_op_in_unsafe_fn)]
     #[cfg(all(feature = "all", any(target_os = "android", target_os = "linux")))]
     #[cfg_attr(
         docsrs,
         doc(cfg(all(feature = "all", any(target_os = "android", target_os = "linux"))))
     )]
-    pub fn vsock(cid: u32, port: u32) -> io::Result<SockAddr> {
-        unsafe {
-            SockAddr::init(|storage, len| {
-                // Safety: `SockAddr::init` zeros the address, which is a valid
-                // representation.
-                let storage: &mut libc::sockaddr_vm = unsafe { &mut *storage.cast() };
-                let len: &mut socklen_t = unsafe { &mut *len };
-
-                storage.svm_family = libc::AF_VSOCK as sa_family_t;
-                storage.svm_cid = cid;
-                storage.svm_port = port;
-
-                *len = mem::size_of::<libc::sockaddr_vm>() as socklen_t;
-
-                Ok(())
-            })
+    pub fn vsock(cid: u32, port: u32) -> SockAddr {
+        // SAFETY: a `sockaddr_storage` of all zeros is valid.
+        let mut storage = unsafe { mem::zeroed::<sockaddr_storage>() };
+        {
+            let storage: &mut libc::sockaddr_vm =
+                unsafe { &mut *((&mut storage as *mut sockaddr_storage).cast()) };
+            storage.svm_family = libc::AF_VSOCK as sa_family_t;
+            storage.svm_cid = cid;
+            storage.svm_port = port;
         }
-        .map(|(_, addr)| addr)
+        unsafe { SockAddr::new(storage, mem::size_of::<libc::sockaddr_vm>() as socklen_t) }
     }
 
     /// Returns this address VSOCK CID/port if it is in the `AF_VSOCK` family,
@@ -564,7 +561,7 @@ impl SockAddr {
         docsrs,
         doc(cfg(all(feature = "all", any(target_os = "android", target_os = "linux"))))
     )]
-    pub fn vsock_address(&self) -> Option<(u32, u32)> {
+    pub fn as_vsock_address(&self) -> Option<(u32, u32)> {
         if self.family() == libc::AF_VSOCK as sa_family_t {
             // Safety: if the ss_family field is AF_VSOCK then storage must be a sockaddr_vm.
             let addr = unsafe { &*(self.as_ptr() as *const libc::sockaddr_vm) };
@@ -631,14 +628,13 @@ pub(crate) fn poll_connect(socket: &crate::Socket, timeout: Duration) -> io::Res
                 // Error or hang up indicates an error (or failure to connect).
                 if (pollfd.revents & libc::POLLHUP) != 0 || (pollfd.revents & libc::POLLERR) != 0 {
                     match socket.take_error() {
-                        Ok(Some(err)) => return Err(err),
+                        Ok(Some(err)) | Err(err) => return Err(err),
                         Ok(None) => {
                             return Err(io::Error::new(
                                 io::ErrorKind::Other,
                                 "no error set after POLLHUP",
                             ))
                         }
-                        Err(err) => return Err(err),
                     }
                 }
                 return Ok(());
@@ -670,23 +666,29 @@ pub(crate) fn listen(fd: Socket, backlog: c_int) -> io::Result<()> {
 
 pub(crate) fn accept(fd: Socket) -> io::Result<(Socket, SockAddr)> {
     // Safety: `accept` initialises the `SockAddr` for us.
-    unsafe { SockAddr::init(|storage, len| syscall!(accept(fd, storage.cast(), len))) }
+    unsafe { SockAddr::try_init(|storage, len| syscall!(accept(fd, storage.cast(), len))) }
 }
 
 pub(crate) fn getsockname(fd: Socket) -> io::Result<SockAddr> {
     // Safety: `accept` initialises the `SockAddr` for us.
-    unsafe { SockAddr::init(|storage, len| syscall!(getsockname(fd, storage.cast(), len))) }
+    unsafe { SockAddr::try_init(|storage, len| syscall!(getsockname(fd, storage.cast(), len))) }
         .map(|(_, addr)| addr)
 }
 
 pub(crate) fn getpeername(fd: Socket) -> io::Result<SockAddr> {
     // Safety: `accept` initialises the `SockAddr` for us.
-    unsafe { SockAddr::init(|storage, len| syscall!(getpeername(fd, storage.cast(), len))) }
+    unsafe { SockAddr::try_init(|storage, len| syscall!(getpeername(fd, storage.cast(), len))) }
         .map(|(_, addr)| addr)
 }
 
 pub(crate) fn try_clone(fd: Socket) -> io::Result<Socket> {
     syscall!(fcntl(fd, libc::F_DUPFD_CLOEXEC, 0))
+}
+
+#[cfg(all(feature = "all", unix))]
+pub(crate) fn nonblocking(fd: Socket) -> io::Result<bool> {
+    let file_status_flags = fcntl_get(fd, libc::F_GETFL)?;
+    Ok((file_status_flags & libc::O_NONBLOCK) != 0)
 }
 
 pub(crate) fn set_nonblocking(fd: Socket, nonblocking: bool) -> io::Result<()> {
@@ -723,7 +725,7 @@ pub(crate) fn recv_from(
 ) -> io::Result<(usize, SockAddr)> {
     // Safety: `recvfrom` initialises the `SockAddr` for us.
     unsafe {
-        SockAddr::init(|addr, addrlen| {
+        SockAddr::try_init(|addr, addrlen| {
             syscall!(recvfrom(
                 fd,
                 buf.as_mut_ptr().cast(),
@@ -755,7 +757,7 @@ pub(crate) fn recv_from_vectored(
     // Safety: `recvmsg` initialises the address storage and we set the length
     // manually.
     unsafe {
-        SockAddr::init(|storage, len| {
+        SockAddr::try_init(|storage, len| {
             recvmsg(fd, storage, bufs, flags).map(|(n, addrlen, recv_flags)| {
                 // Set the correct address length.
                 *len = addrlen;
@@ -853,7 +855,7 @@ pub(crate) fn timeout_opt(fd: Socket, opt: c_int, val: c_int) -> io::Result<Opti
     unsafe { getsockopt(fd, opt, val).map(from_timeval) }
 }
 
-fn from_timeval(duration: libc::timeval) -> Option<Duration> {
+const fn from_timeval(duration: libc::timeval) -> Option<Duration> {
     if duration.tv_sec == 0 && duration.tv_usec == 0 {
         None
     } else {
@@ -935,9 +937,14 @@ fn into_secs(duration: Duration) -> c_int {
     min(duration.as_secs(), c_int::MAX as u64) as c_int
 }
 
+/// Get the flags using `cmd`.
+fn fcntl_get(fd: Socket, cmd: c_int) -> io::Result<c_int> {
+    syscall!(fcntl(fd, cmd))
+}
+
 /// Add `flag` to the current set flags of `F_GETFD`.
 fn fcntl_add(fd: Socket, get_cmd: c_int, set_cmd: c_int, flag: c_int) -> io::Result<()> {
-    let previous = syscall!(fcntl(fd, get_cmd))?;
+    let previous = fcntl_get(fd, get_cmd)?;
     let new = previous | flag;
     if new != previous {
         syscall!(fcntl(fd, set_cmd, new)).map(|_| ())
@@ -949,7 +956,7 @@ fn fcntl_add(fd: Socket, get_cmd: c_int, set_cmd: c_int, flag: c_int) -> io::Res
 
 /// Remove `flag` to the current set flags of `F_GETFD`.
 fn fcntl_remove(fd: Socket, get_cmd: c_int, set_cmd: c_int, flag: c_int) -> io::Result<()> {
-    let previous = syscall!(fcntl(fd, get_cmd))?;
+    let previous = fcntl_get(fd, get_cmd)?;
     let new = previous & !flag;
     if new != previous {
         syscall!(fcntl(fd, set_cmd, new)).map(|_| ())
@@ -984,7 +991,7 @@ pub(crate) unsafe fn setsockopt<T>(
     val: c_int,
     payload: T,
 ) -> io::Result<()> {
-    let payload = &payload as *const T as *const c_void;
+    let payload = ptr::addr_of!(payload).cast();
     syscall!(setsockopt(
         fd,
         opt,
@@ -995,7 +1002,7 @@ pub(crate) unsafe fn setsockopt<T>(
     .map(|_| ())
 }
 
-pub(crate) fn to_in_addr(addr: &Ipv4Addr) -> in_addr {
+pub(crate) const fn to_in_addr(addr: &Ipv4Addr) -> in_addr {
     // `s_addr` is stored as BE on all machines, and the array is in BE order.
     // So the native endian conversion method is used so that it's never
     // swapped.
@@ -1008,7 +1015,7 @@ pub(crate) fn from_in_addr(in_addr: in_addr) -> Ipv4Addr {
     Ipv4Addr::from(in_addr.s_addr.to_ne_bytes())
 }
 
-pub(crate) fn to_in6_addr(addr: &Ipv6Addr) -> in6_addr {
+pub(crate) const fn to_in6_addr(addr: &Ipv6Addr) -> in6_addr {
     in6_addr {
         s6_addr: addr.octets(),
     }
@@ -1026,7 +1033,7 @@ pub(crate) fn from_in6_addr(addr: in6_addr) -> Ipv6Addr {
     target_os = "redox",
     target_os = "solaris",
 )))]
-pub(crate) fn to_mreqn(
+pub(crate) const fn to_mreqn(
     multiaddr: &Ipv4Addr,
     interface: &crate::socket::InterfaceIndexOrAddress,
 ) -> libc::ip_mreqn {
@@ -1053,6 +1060,7 @@ impl crate::Socket {
     /// This function will block the calling thread until a new connection is
     /// established. When established, the corresponding `Socket` and the remote
     /// peer's address will be returned.
+    #[doc = man_links!(unix: accept4(2))]
     #[cfg(all(
         feature = "all",
         any(
@@ -1099,7 +1107,7 @@ impl crate::Socket {
     pub(crate) fn _accept4(&self, flags: c_int) -> io::Result<(crate::Socket, SockAddr)> {
         // Safety: `accept4` initialises the `SockAddr` for us.
         unsafe {
-            SockAddr::init(|storage, len| {
+            SockAddr::try_init(|storage, len| {
                 syscall!(accept4(self.as_raw(), storage.cast(), len, flags))
                     .map(crate::Socket::from_raw)
             })
@@ -1576,12 +1584,12 @@ impl crate::Socket {
     /// If `interface` is `None`, the binding is removed. If the `interface`
     /// index is not valid, an error is returned.
     ///
-    /// One can use `libc::if_nametoindex` to convert an interface alias to an
+    /// One can use [`libc::if_nametoindex`] to convert an interface alias to an
     /// index.
     #[cfg(all(feature = "all", target_vendor = "apple"))]
     #[cfg_attr(docsrs, doc(cfg(all(feature = "all", target_vendor = "apple"))))]
     pub fn bind_device_by_index(&self, interface: Option<NonZeroU32>) -> io::Result<()> {
-        let index = interface.map(NonZeroU32::get).unwrap_or(0);
+        let index = interface.map_or(0, NonZeroU32::get);
         unsafe { setsockopt(self.as_raw(), IPPROTO_IP, libc::IP_BOUND_IF, index) }
     }
 
@@ -1797,6 +1805,62 @@ impl crate::Socket {
         }
     }
 
+    /// Get the value for the `SO_ORIGINAL_DST` option on this socket.
+    ///
+    /// This value contains the original destination IPv4 address of the connection
+    /// redirected using `iptables` `REDIRECT` or `TPROXY`.
+    #[cfg(all(
+        feature = "all",
+        any(target_os = "android", target_os = "fuchsia", target_os = "linux")
+    ))]
+    #[cfg_attr(
+        docsrs,
+        doc(cfg(all(
+            feature = "all",
+            any(target_os = "android", target_os = "fuchsia", target_os = "linux")
+        )))
+    )]
+    pub fn original_dst(&self) -> io::Result<SockAddr> {
+        // Safety: `getsockopt` initialises the `SockAddr` for us.
+        unsafe {
+            SockAddr::try_init(|storage, len| {
+                syscall!(getsockopt(
+                    self.as_raw(),
+                    libc::SOL_IP,
+                    libc::SO_ORIGINAL_DST,
+                    storage.cast(),
+                    len
+                ))
+            })
+        }
+        .map(|(_, addr)| addr)
+    }
+
+    /// Get the value for the `IP6T_SO_ORIGINAL_DST` option on this socket.
+    ///
+    /// This value contains the original destination IPv6 address of the connection
+    /// redirected using `ip6tables` `REDIRECT` or `TPROXY`.
+    #[cfg(all(feature = "all", any(target_os = "android", target_os = "linux")))]
+    #[cfg_attr(
+        docsrs,
+        doc(cfg(all(feature = "all", any(target_os = "android", target_os = "linux"))))
+    )]
+    pub fn original_dst_ipv6(&self) -> io::Result<SockAddr> {
+        // Safety: `getsockopt` initialises the `SockAddr` for us.
+        unsafe {
+            SockAddr::try_init(|storage, len| {
+                syscall!(getsockopt(
+                    self.as_raw(),
+                    libc::SOL_IPV6,
+                    libc::IP6T_SO_ORIGINAL_DST,
+                    storage.cast(),
+                    len
+                ))
+            })
+        }
+        .map(|(_, addr)| addr)
+    }
+
     /// Copies data between a `file` and this socket using the `sendfile(2)`
     /// system call. Because this copying is done within the kernel,
     /// `sendfile()` is more efficient than the combination of `read(2)` and
@@ -1806,6 +1870,7 @@ impl crate::Socket {
     /// Different OSs support different kinds of `file`s, see the OS
     /// documentation for what kind of files are supported. Generally *regular*
     /// files are supported by all OSs.
+    #[doc = man_links!(unix: sendfile(2))]
     ///
     /// The `offset` is the absolute offset into the `file` to use as starting
     /// point.
@@ -1936,9 +2001,9 @@ impl crate::Socket {
         )))
     )]
     pub fn set_tcp_user_timeout(&self, timeout: Option<Duration>) -> io::Result<()> {
-        let timeout = timeout
-            .map(|to| min(to.as_millis(), libc::c_uint::MAX as u128) as libc::c_uint)
-            .unwrap_or(0);
+        let timeout = timeout.map_or(0, |to| {
+            min(to.as_millis(), libc::c_uint::MAX as u128) as libc::c_uint
+        });
         unsafe {
             setsockopt(
                 self.as_raw(),
@@ -2008,6 +2073,148 @@ impl crate::Socket {
     pub fn detach_filter(&self) -> io::Result<()> {
         unsafe { setsockopt(self.as_raw(), libc::SOL_SOCKET, libc::SO_DETACH_FILTER, 0) }
     }
+
+    /// Get the value of the `IPV6_TCLASS` option for this socket.
+    ///
+    /// For more information about this option, see [`set_tclass_v6`].
+    ///
+    /// [`set_tclass_v6`]: Socket::set_tclass_v6
+    #[cfg(all(
+        feature = "all",
+        any(
+            target_os = "android",
+            target_os = "dragonfly",
+            target_os = "freebsd",
+            target_os = "fuchsia",
+            target_os = "linux",
+            target_os = "macos",
+            target_os = "netbsd",
+            target_os = "openbsd"
+        )
+    ))]
+    #[cfg_attr(
+        docsrs,
+        doc(cfg(all(
+            feature = "all",
+            any(
+                target_os = "android",
+                target_os = "dragonfly",
+                target_os = "freebsd",
+                target_os = "fuchsia",
+                target_os = "linux",
+                target_os = "macos",
+                target_os = "netbsd",
+                target_os = "openbsd"
+            )
+        )))
+    )]
+    pub fn tclass_v6(&self) -> io::Result<u32> {
+        unsafe {
+            getsockopt::<c_int>(self.as_raw(), IPPROTO_IPV6, libc::IPV6_TCLASS)
+                .map(|tclass| tclass as u32)
+        }
+    }
+
+    /// Set the value of the `IPV6_TCLASS` option for this socket.
+    ///
+    /// Specifies the traffic class field that is used in every packets
+    /// sent from this socket.
+    #[cfg(all(
+        feature = "all",
+        any(
+            target_os = "android",
+            target_os = "dragonfly",
+            target_os = "freebsd",
+            target_os = "fuchsia",
+            target_os = "linux",
+            target_os = "macos",
+            target_os = "netbsd",
+            target_os = "openbsd"
+        )
+    ))]
+    #[cfg_attr(
+        docsrs,
+        doc(cfg(all(
+            feature = "all",
+            any(
+                target_os = "android",
+                target_os = "dragonfly",
+                target_os = "freebsd",
+                target_os = "fuchsia",
+                target_os = "linux",
+                target_os = "macos",
+                target_os = "netbsd",
+                target_os = "openbsd"
+            )
+        )))
+    )]
+    pub fn set_tclass_v6(&self, tclass: u32) -> io::Result<()> {
+        unsafe {
+            setsockopt(
+                self.as_raw(),
+                IPPROTO_IPV6,
+                libc::IPV6_TCLASS,
+                tclass as c_int,
+            )
+        }
+    }
+
+    /// Get the value of the `TCP_CONGESTION` option for this socket.
+    ///
+    /// For more information about this option, see [`set_tcp_congestion`].
+    ///
+    /// [`set_tcp_congestion`]: Socket::set_tcp_congestion
+    #[cfg(all(feature = "all", any(target_os = "freebsd", target_os = "linux")))]
+    #[cfg_attr(
+        docsrs,
+        doc(cfg(all(feature = "all", any(target_os = "freebsd", target_os = "linux"))))
+    )]
+    pub fn tcp_congestion(&self) -> io::Result<Vec<u8>> {
+        let mut payload: [u8; TCP_CA_NAME_MAX] = [0; TCP_CA_NAME_MAX];
+        let mut len = payload.len() as libc::socklen_t;
+        syscall!(getsockopt(
+            self.as_raw(),
+            IPPROTO_TCP,
+            libc::TCP_CONGESTION,
+            payload.as_mut_ptr().cast(),
+            &mut len,
+        ))
+        .map(|_| {
+            let buf = &payload[..len as usize];
+            // TODO: use `MaybeUninit::slice_assume_init_ref` once stable.
+            unsafe { &*(buf as *const [_] as *const [u8]) }.into()
+        })
+    }
+
+    /// Set the value of the `TCP_CONGESTION` option for this socket.
+    ///
+    /// Specifies the TCP congestion control algorithm to use for this socket.
+    ///
+    /// The value must be a valid TCP congestion control algorithm name of the
+    /// platform. For example, Linux may supports "reno", "cubic".
+    #[cfg(all(feature = "all", any(target_os = "freebsd", target_os = "linux")))]
+    #[cfg_attr(
+        docsrs,
+        doc(cfg(all(feature = "all", any(target_os = "freebsd", target_os = "linux"))))
+    )]
+    pub fn set_tcp_congestion(&self, tcp_ca_name: &[u8]) -> io::Result<()> {
+        syscall!(setsockopt(
+            self.as_raw(),
+            IPPROTO_TCP,
+            libc::TCP_CONGESTION,
+            tcp_ca_name.as_ptr() as *const _,
+            tcp_ca_name.len() as libc::socklen_t,
+        ))
+        .map(|_| ())
+    }
+}
+
+#[cfg_attr(docsrs, doc(cfg(unix)))]
+impl AsFd for crate::Socket {
+    fn as_fd(&self) -> BorrowedFd<'_> {
+        // SAFETY: lifetime is bound by self.
+        unsafe { BorrowedFd::borrow_raw(self.as_raw()) }
+    }
 }
 
 #[cfg_attr(docsrs, doc(cfg(unix)))]
@@ -2018,9 +2225,25 @@ impl AsRawFd for crate::Socket {
 }
 
 #[cfg_attr(docsrs, doc(cfg(unix)))]
+impl From<crate::Socket> for OwnedFd {
+    fn from(sock: crate::Socket) -> OwnedFd {
+        // SAFETY: sock.into_raw() always returns a valid fd.
+        unsafe { OwnedFd::from_raw_fd(sock.into_raw()) }
+    }
+}
+
+#[cfg_attr(docsrs, doc(cfg(unix)))]
 impl IntoRawFd for crate::Socket {
     fn into_raw_fd(self) -> c_int {
         self.into_raw()
+    }
+}
+
+#[cfg_attr(docsrs, doc(cfg(unix)))]
+impl From<OwnedFd> for crate::Socket {
+    fn from(fd: OwnedFd) -> crate::Socket {
+        // SAFETY: `OwnedFd` ensures the fd is valid.
+        unsafe { crate::Socket::from_raw_fd(fd.into_raw_fd()) }
     }
 }
 

@@ -116,6 +116,56 @@ macro_rules! from {
     };
 }
 
+/// Link to online documentation for (almost) all supported OSs.
+#[rustfmt::skip]
+macro_rules! man_links {
+    // Links to all OSs.
+    ($syscall: tt ( $section: tt ) ) => {
+        concat!(
+            man_links!(__ intro),
+            man_links!(__ unix $syscall($section)),
+            man_links!(__ windows $syscall($section)),
+        )
+    };
+    // Links to Unix-like OSs.
+    (unix: $syscall: tt ( $section: tt ) ) => {
+        concat!(
+            man_links!(__ intro),
+            man_links!(__ unix $syscall($section)),
+        )
+    };
+    // Links to Windows only.
+    (windows: $syscall: tt ( $section: tt ) ) => {
+        concat!(
+            man_links!(__ intro),
+            man_links!(__ windows $syscall($section)),
+        )
+    };
+    // Internals.
+    (__ intro) => {
+        "\n\nAdditional documentation can be found in manual of the OS:\n\n"
+    };
+    // List for Unix-like OSs.
+    (__ unix $syscall: tt ( $section: tt ) ) => {
+        concat!(
+            " * DragonFly BSD: <https://man.dragonflybsd.org/?command=", stringify!($syscall), "&section=", stringify!($section), ">\n",
+            " * FreeBSD: <https://www.freebsd.org/cgi/man.cgi?query=", stringify!($syscall), "&sektion=", stringify!($section), ">\n",
+            " * Linux: <https://man7.org/linux/man-pages/man", stringify!($section), "/", stringify!($syscall), ".", stringify!($section), ".html>\n",
+            " * macOS: <https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/", stringify!($syscall), ".", stringify!($section), ".html> (archived, actually for iOS)\n",
+            " * NetBSD: <https://man.netbsd.org/", stringify!($syscall), ".", stringify!($section), ">\n",
+            " * OpenBSD: <https://man.openbsd.org/", stringify!($syscall), ".", stringify!($section), ">\n",
+            " * iOS: <https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/", stringify!($syscall), ".", stringify!($section), ".html> (archived)\n",
+            " * illumos: <https://illumos.org/man/3SOCKET/", stringify!($syscall), ">\n",
+        )
+    };
+    // List for Window (so just Windows).
+    (__ windows $syscall: tt ( $section: tt ) ) => {
+        concat!(
+            " * Windows: <https://docs.microsoft.com/en-us/windows/win32/api/winsock2/nf-winsock2-", stringify!($syscall), ">\n",
+        )
+    };
+}
+
 mod sockaddr;
 mod socket;
 mod sockref;
@@ -161,6 +211,9 @@ impl Domain {
 
     /// Domain for IPv6 communication, corresponding to `AF_INET6`.
     pub const IPV6: Domain = Domain(sys::AF_INET6);
+
+    /// Domain for Unix socket communication, corresponding to `AF_UNIX`.
+    pub const UNIX: Domain = Domain(sys::AF_UNIX);
 
     /// Returns the correct domain for `address`.
     pub const fn for_address(address: SocketAddr) -> Domain {
@@ -251,6 +304,14 @@ impl Protocol {
 
     /// Protocol corresponding to `UDP`.
     pub const UDP: Protocol = Protocol(sys::IPPROTO_UDP);
+
+    #[cfg(target_os = "linux")]
+    /// Protocol corresponding to `MPTCP`.
+    pub const MPTCP: Protocol = Protocol(sys::IPPROTO_MPTCP);
+
+    #[cfg(all(feature = "all", any(target_os = "freebsd", target_os = "linux")))]
+    /// Protocol corresponding to `SCTP`.
+    pub const SCTP: Protocol = Protocol(sys::IPPROTO_SCTP);
 }
 
 impl From<c_int> for Protocol {
@@ -329,10 +390,16 @@ impl<'a> DerefMut for MaybeUninitSlice<'a> {
 /// See [`Socket::set_tcp_keepalive`].
 #[derive(Debug, Clone)]
 pub struct TcpKeepalive {
+    #[cfg_attr(target_os = "openbsd", allow(dead_code))]
     time: Option<Duration>,
-    #[cfg(not(any(target_os = "redox", target_os = "solaris")))]
+    #[cfg(not(any(target_os = "openbsd", target_os = "redox", target_os = "solaris")))]
     interval: Option<Duration>,
-    #[cfg(not(any(target_os = "redox", target_os = "solaris", target_os = "windows")))]
+    #[cfg(not(any(
+        target_os = "openbsd",
+        target_os = "redox",
+        target_os = "solaris",
+        target_os = "windows"
+    )))]
     retries: Option<u32>,
 }
 
@@ -341,9 +408,14 @@ impl TcpKeepalive {
     pub const fn new() -> TcpKeepalive {
         TcpKeepalive {
             time: None,
-            #[cfg(not(any(target_os = "redox", target_os = "solaris")))]
+            #[cfg(not(any(target_os = "openbsd", target_os = "redox", target_os = "solaris")))]
             interval: None,
-            #[cfg(not(any(target_os = "redox", target_os = "solaris", target_os = "windows")))]
+            #[cfg(not(any(
+                target_os = "openbsd",
+                target_os = "redox",
+                target_os = "solaris",
+                target_os = "windows"
+            )))]
             retries: None,
         }
     }
@@ -376,9 +448,11 @@ impl TcpKeepalive {
     #[cfg(all(
         feature = "all",
         any(
+            target_os = "android",
             target_os = "dragonfly",
             target_os = "freebsd",
             target_os = "fuchsia",
+            target_os = "illumos",
             target_os = "linux",
             target_os = "wasi",
             target_os = "netbsd",
@@ -391,8 +465,11 @@ impl TcpKeepalive {
         doc(cfg(all(
             feature = "all",
             any(
+                target_os = "android",
+                target_os = "dragonfly",
                 target_os = "freebsd",
                 target_os = "fuchsia",
+                target_os = "illumos",
                 target_os = "linux",
                 target_os = "wasi",
                 target_os = "netbsd",
@@ -416,9 +493,11 @@ impl TcpKeepalive {
         feature = "all",
         any(
             doc,
+            target_os = "android",
             target_os = "dragonfly",
             target_os = "freebsd",
             target_os = "fuchsia",
+            target_os = "illumos",
             target_os = "linux",
             target_os = "wasi",
             target_os = "netbsd",
@@ -430,8 +509,11 @@ impl TcpKeepalive {
         doc(cfg(all(
             feature = "all",
             any(
+                target_os = "android",
+                target_os = "dragonfly",
                 target_os = "freebsd",
                 target_os = "fuchsia",
+                target_os = "illumos",
                 target_os = "linux",
                 target_os = "wasi",
                 target_os = "netbsd",
