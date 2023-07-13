@@ -742,7 +742,6 @@ const fn set_common_type(ty: Type) -> Type {
         target_os = "fuchsia",
         target_os = "illumos",
         target_os = "linux",
-        target_os = "wasi",
         target_os = "netbsd",
         target_os = "openbsd",
     ))]
@@ -769,7 +768,6 @@ fn set_common_flags(socket: Socket) -> io::Result<Socket> {
             target_os = "fuchsia",
             target_os = "illumos",
             target_os = "linux",
-            target_os = "wasi",
             target_os = "netbsd",
             target_os = "openbsd",
         ))
