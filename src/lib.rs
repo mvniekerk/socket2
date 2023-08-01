@@ -103,7 +103,7 @@ macro_rules! from {
     ($from: ty, $for: ty) => {
         impl From<$from> for $for {
             fn from(socket: $from) -> $for {
-                #[cfg(any(unix, target_os="wasi"))]
+                #[cfg(any(unix, target_os = "wasi"))]
                 unsafe {
                     <$for>::from_raw_fd(socket.into_raw_fd())
                 }
@@ -482,6 +482,7 @@ impl TcpKeepalive {
         target_os = "tvos",
         target_os = "watchos",
         target_os = "windows",
+        target_os = "wasi",
     ))]
     #[cfg_attr(
         docsrs,
