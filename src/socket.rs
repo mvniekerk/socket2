@@ -797,6 +797,7 @@ fn set_common_flags(socket: Socket) -> io::Result<Socket> {
             target_os = "linux",
             target_os = "netbsd",
             target_os = "openbsd",
+            target_os = "espidf",
         ))
     ))]
     socket._set_cloexec(true)?;
@@ -1115,8 +1116,11 @@ impl Socket {
     /// For more information about this option, see [`set_header_included`].
     ///
     /// [`set_header_included`]: Socket::set_header_included
-    #[cfg(all(feature = "all", not(target_os = "redox")))]
-    #[cfg_attr(docsrs, doc(cfg(all(feature = "all", not(target_os = "redox")))))]
+    #[cfg(all(feature = "all", not(any(target_os = "redox", target_os = "espidf"))))]
+    #[cfg_attr(
+        docsrs,
+        doc(cfg(all(feature = "all", not(any(target_os = "redox", target_os = "espidf")))))
+    )]
     pub fn header_included(&self) -> io::Result<bool> {
         unsafe {
             getsockopt::<c_int>(self.as_raw(), sys::IPPROTO_IP, libc::IP_HDRINCL)
@@ -1139,8 +1143,11 @@ impl Socket {
         any(target_os = "fuchsia", target_os = "illumos", target_os = "solaris"),
         allow(rustdoc::broken_intra_doc_links)
     )]
-    #[cfg(all(feature = "all", not(target_os = "redox")))]
-    #[cfg_attr(docsrs, doc(cfg(all(feature = "all", not(target_os = "redox")))))]
+    #[cfg(all(feature = "all", not(any(target_os = "redox", target_os = "espidf"))))]
+    #[cfg_attr(
+        docsrs,
+        doc(cfg(all(feature = "all", not(any(target_os = "redox", target_os = "espidf")))))
+    )]
     pub fn set_header_included(&self, included: bool) -> io::Result<()> {
         unsafe {
             setsockopt(
@@ -1244,6 +1251,7 @@ impl Socket {
         target_os = "redox",
         target_os = "solaris",
         target_os = "nto",
+        target_os = "espidf",
     )))]
     pub fn join_multicast_v4_n(
         &self,
@@ -1275,6 +1283,7 @@ impl Socket {
         target_os = "redox",
         target_os = "solaris",
         target_os = "nto",
+        target_os = "espidf",
     )))]
     pub fn leave_multicast_v4_n(
         &self,
@@ -1307,6 +1316,7 @@ impl Socket {
         target_os = "redox",
         target_os = "fuchsia",
         target_os = "nto",
+        target_os = "espidf",
     )))]
     pub fn join_ssm_v4(
         &self,
@@ -1342,6 +1352,7 @@ impl Socket {
         target_os = "redox",
         target_os = "fuchsia",
         target_os = "nto",
+        target_os = "espidf",
     )))]
     pub fn leave_ssm_v4(
         &self,
@@ -1519,6 +1530,7 @@ impl Socket {
         target_os = "solaris",
         target_os = "haiku",
         target_os = "nto",
+        target_os = "espidf",
     )))]
     pub fn set_recv_tos(&self, recv_tos: bool) -> io::Result<()> {
         unsafe {
@@ -1547,6 +1559,7 @@ impl Socket {
         target_os = "solaris",
         target_os = "haiku",
         target_os = "nto",
+        target_os = "espidf",
     )))]
     pub fn recv_tos(&self) -> io::Result<bool> {
         unsafe {
@@ -1763,6 +1776,7 @@ impl Socket {
         target_os = "solaris",
         target_os = "haiku",
         target_os = "wasi",
+        target_os = "espidf",
     )))]
     pub fn recv_tclass_v6(&self) -> io::Result<bool> {
         unsafe {
@@ -1786,6 +1800,7 @@ impl Socket {
         target_os = "solaris",
         target_os = "haiku",
         target_os = "wasi",
+        target_os = "espidf",
     )))]
     pub fn set_recv_tclass_v6(&self, recv_tclass: bool) -> io::Result<()> {
         unsafe {
