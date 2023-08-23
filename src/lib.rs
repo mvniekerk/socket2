@@ -107,7 +107,7 @@ macro_rules! from {
     ($from: ty, $for: ty) => {
         impl From<$from> for $for {
             fn from(socket: $from) -> $for {
-                #[cfg(any(unix, target_os="wasi"))]
+                #[cfg(any(unix, target_os = "wasi"))]
                 unsafe {
                     <$for>::from_raw_fd(socket.into_raw_fd())
                 }
@@ -256,12 +256,12 @@ impl Type {
     /// Type corresponding to `SOCK_STREAM`.
     ///
     /// Used for protocols such as TCP.
-    pub const STREAM: Type = Type(sys::SOCK_STREAM as i32);
+    pub const STREAM: Type = Type(sys::SOCK_STREAM);
 
     /// Type corresponding to `SOCK_DGRAM`.
     ///
     /// Used for protocols such as UDP.
-    pub const DGRAM: Type = Type(sys::SOCK_DGRAM as i32);
+    pub const DGRAM: Type = Type(sys::SOCK_DGRAM);
 
     /// Type corresponding to `SOCK_DCCP`.
     ///
@@ -509,6 +509,7 @@ impl TcpKeepalive {
         target_os = "netbsd",
         target_os = "tvos",
         target_os = "watchos",
+        target_os = "wasi",
         target_os = "windows",
     ))]
     #[cfg_attr(

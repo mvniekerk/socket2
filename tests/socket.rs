@@ -16,6 +16,7 @@ use std::fs::File;
 use std::io;
 #[cfg(not(target_os = "redox"))]
 use std::io::IoSlice;
+#[cfg(not(target_os = "wasi"))]
 use std::io::Read;
 use std::io::Write;
 use std::mem::{self, MaybeUninit};
@@ -36,15 +37,16 @@ use std::net::{Ipv6Addr, SocketAddrV6};
     )
 ))]
 use std::num::NonZeroUsize;
-#[cfg(unix)]
+#[cfg(any(unix, target_os = "wasi"))]
 use std::os::unix::io::AsRawFd;
 #[cfg(windows)]
 use std::os::windows::io::AsRawSocket;
-#[cfg(any(unix, target_os = "wasi"))]
+#[cfg(unix)]
 use std::path::Path;
 use std::str;
 use std::thread;
 use std::time::Duration;
+#[cfg(not(target_os = "wasi"))]
 use std::{env, fs};
 
 #[cfg(windows)]
@@ -71,9 +73,9 @@ fn domain_fmt_debug() {
         (Domain::IPV4, "AF_INET"),
         (Domain::IPV6, "AF_INET6"),
         (Domain::UNIX, "AF_UNIX"),
-        #[cfg(all(feature = "all", any(target_os = "fuchsia", target_os = "linux", target_os = "wasi")))]
+        #[cfg(all(feature = "all", any(target_os = "fuchsia", target_os = "linux")))]
         (Domain::PACKET, "AF_PACKET"),
-        #[cfg(all(feature = "all", any(target_os = "android", target_os = "linux", target_os = "wasi")))]
+        #[cfg(all(feature = "all", any(target_os = "android", target_os = "linux")))]
         (Domain::VSOCK, "AF_VSOCK"),
         (0.into(), "AF_UNSPEC"),
         (500.into(), "500"),
@@ -143,6 +145,7 @@ fn from_invalid_raw_fd_should_panic() {
 }
 
 #[test]
+#[cfg(not(target_os = "wasi"))]
 fn socket_address_unix() {
     let string = "/tmp/socket";
     let addr = SockAddr::unix(string).unwrap();
@@ -163,6 +166,7 @@ fn socket_address_unix() {
 }
 
 #[test]
+#[cfg(not(target_os = "wasi"))]
 fn socket_address_unix_unnamed() {
     let addr = SockAddr::unix("").unwrap();
     assert!(addr.as_socket_ipv4().is_none());
@@ -181,7 +185,7 @@ fn socket_address_unix_unnamed() {
 }
 
 #[test]
-#[cfg(all(any(target_os = "linux", target_os = "android", target_os = "wasi"), feature = "all"))]
+#[cfg(all(any(target_os = "linux", target_os = "android"), feature = "all"))]
 fn socket_address_unix_abstract_namespace() {
     let path = "\0h".repeat(108 / 2);
     let addr = SockAddr::unix(&path).unwrap();
@@ -197,7 +201,7 @@ fn socket_address_unix_abstract_namespace() {
 }
 
 #[test]
-#[cfg(all(feature = "all", any(target_os = "android", target_os = "linux", target_os = "wasi")))]
+#[cfg(all(feature = "all", any(target_os = "android", target_os = "linux")))]
 fn socket_address_vsock() {
     let addr = SockAddr::vsock(1, 9999);
     assert!(addr.as_socket_ipv4().is_none());
@@ -218,7 +222,7 @@ fn set_nonblocking() {
 }
 
 fn assert_common_flags(socket: &Socket, expected: bool) {
-    #[cfg(unix)]
+    #[cfg(any(unix, target_os = "wasi"))]
     assert_close_on_exec(socket, expected);
     #[cfg(any(
         target_os = "ios",
@@ -282,7 +286,7 @@ fn type_nonblocking() {
 }
 
 /// Assert that `NONBLOCK` is set on `socket`.
-#[cfg(unix)]
+#[cfg(any(unix, target_os = "wasi"))]
 #[track_caller]
 pub fn assert_nonblocking(socket: &Socket, want: bool) {
     #[cfg(all(feature = "all", unix))]
@@ -334,7 +338,7 @@ fn type_cloexec() {
 }
 
 /// Assert that `CLOEXEC` is set on `socket`.
-#[cfg(unix)]
+#[cfg(any(unix, target_os = "wasi"))]
 #[track_caller]
 pub fn assert_close_on_exec<S>(socket: &S, want: bool)
 where
@@ -497,6 +501,7 @@ fn pair() {
     assert_eq!(&buf[..n], DATA);
 }
 
+#[cfg(not(target_os = "wasi"))]
 fn unix_sockets_supported() -> bool {
     #[cfg(windows)]
     {
@@ -516,6 +521,7 @@ fn unix_sockets_supported() -> bool {
 }
 
 #[test]
+#[cfg(not(target_os = "wasi"))]
 fn unix() {
     if !unix_sockets_supported() {
         return;
@@ -544,7 +550,7 @@ fn unix() {
 }
 
 #[test]
-#[cfg(all(feature = "all", any(target_os = "android", target_os = "linux", target_os = "wasi")))]
+#[cfg(all(feature = "all", any(target_os = "android", target_os = "linux")))]
 #[ignore = "using VSOCK family requires optional kernel support (works when enabled)"]
 fn vsock() {
     let addr = SockAddr::vsock(libc::VMADDR_CID_LOCAL, libc::VMADDR_PORT_ANY);
@@ -597,7 +603,7 @@ fn out_of_band() {
 }
 
 #[test]
-#[cfg(not(target_os = "redox"))] // cfg of `udp_pair_unconnected()`
+#[cfg(not(any(target_os = "redox", target_os = "wasi")))] // cfg of `udp_pair_unconnected()`
 fn udp_peek_sender() {
     let (socket_a, socket_b) = udp_pair_unconnected();
 
@@ -708,7 +714,7 @@ fn send_from_recv_to_vectored() {
 }
 
 #[test]
-#[cfg(not(target_os = "redox"))]
+#[cfg(not(any(target_os = "redox", target_os = "wasi")))]
 fn sendmsg() {
     let (socket_a, socket_b) = udp_pair_unconnected();
 
@@ -1132,7 +1138,6 @@ fn is_listener() {
         // target_os = "freebsd",
         target_os = "fuchsia",
         target_os = "linux",
-        target_os = "wasi",
     )
 ))]
 #[test]
@@ -1202,7 +1207,7 @@ fn r#type() {
     }
 }
 
-#[cfg(all(feature = "all", target_os = "linux", target_os = "wasi"))]
+#[cfg(all(feature = "all", any(target_os = "linux", target_os = "wasi")))]
 #[test]
 fn cpu_affinity() {
     let socket = Socket::new(Domain::IPV4, Type::STREAM, None).unwrap();
@@ -1409,6 +1414,7 @@ test!(IPv6 tclass_v6, set_tclass_v6(96));
     target_os = "openbsd",
     target_os = "redox",
     target_os = "solaris",
+    target_os = "wasi",
     target_os = "windows",
 )))]
 test!(IPv6 recv_tclass_v6, set_recv_tclass_v6(true));

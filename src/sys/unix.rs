@@ -661,7 +661,7 @@ pub(crate) fn unix_sockaddr(path: &Path) -> io::Result<SockAddr> {
 }
 
 // Used in `MsgHdr`.
-#[cfg(not(any(target_os = "redox", target_os = "wasi")))]
+#[cfg(not(target_os = "redox"))]
 pub(crate) use libc::msghdr;
 
 #[cfg(not(target_os = "redox"))]
@@ -1186,7 +1186,7 @@ fn fcntl_get(fd: Socket, cmd: c_int) -> io::Result<c_int> {
     syscall!(fcntl(fd, cmd))
 }
 
-//// Add `flag` to the current set flags of `F_GETFD`.
+/// Add `flag` to the current set flags of `F_GETFD`.
 fn fcntl_add(fd: Socket, get_cmd: c_int, set_cmd: c_int, flag: c_int) -> io::Result<()> {
     let previous = fcntl_get(fd, get_cmd)?;
     let new = previous | flag;

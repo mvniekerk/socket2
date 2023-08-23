@@ -14,22 +14,20 @@ use std::mem::MaybeUninit;
 #[cfg(not(target_os = "nto"))]
 use std::net::Ipv6Addr;
 use std::net::{self, Ipv4Addr, Shutdown};
-#[cfg(unix)]
+#[cfg(any(unix, target_os = "wasi"))]
 use std::os::unix::io::{FromRawFd, IntoRawFd};
 #[cfg(windows)]
 use std::os::windows::io::{FromRawSocket, IntoRawSocket};
-#[cfg(target_os = "wasi")]
-use std::os::wasi::io::{FromRawFd, IntoRawFd};
 use std::time::Duration;
 
 use crate::sys::{self, c_int, getsockopt, setsockopt, Bool};
+#[cfg(not(any(target_os = "redox", target_os = "wasi")))]
+use crate::MsgHdr;
 #[cfg(all(unix, not(target_os = "redox")))]
 use crate::MsgHdrMut;
 use crate::{Domain, Protocol, SockAddr, TcpKeepalive, Type};
 #[cfg(not(target_os = "redox"))]
 use crate::{MaybeUninitSlice, RecvFlags};
-#[cfg(not(any(target_os = "redox", target_os = "wasi")))]
-use crate::MsgHdr;
 
 /// Owned wrapper around a system socket.
 ///
@@ -153,7 +151,7 @@ impl Socket {
     /// This function sets the same flags as in done for [`Socket::new`],
     /// [`Socket::pair_raw`] can be used if you don't want to set those flags.
     #[doc = man_links!(unix: socketpair(2))]
-    #[cfg(all(feature = "all", unix))]
+    #[cfg(all(feature = "all", any(unix, target_os = "wasi")))]
     #[cfg_attr(docsrs, doc(cfg(all(feature = "all", unix))))]
     pub fn pair(
         domain: Domain,
@@ -170,7 +168,7 @@ impl Socket {
     /// Creates a pair of sockets which are connected to each other.
     ///
     /// This function corresponds to `socketpair(2)`.
-    #[cfg(all(feature = "all", unix))]
+    #[cfg(all(feature = "all", any(unix, target_os = "wasi")))]
     #[cfg_attr(docsrs, doc(cfg(all(feature = "all", unix))))]
     pub fn pair_raw(
         domain: Domain,
@@ -631,7 +629,7 @@ impl Socket {
     /// but suppresses the `WSAEMSGSIZE` error on Windows.
     ///
     /// [`peek_from`]: Socket::peek_from
-    #[cfg(not(target_os = "wasi"))]
+    #[cfg(any(doc, not(target_os = "wasi")))]
     pub fn peek_sender(&self) -> io::Result<SockAddr> {
         sys::peek_sender(self.as_raw())
     }
@@ -1123,7 +1121,7 @@ impl Socket {
     )]
     pub fn header_included(&self) -> io::Result<bool> {
         unsafe {
-            getsockopt::<c_int>(self.as_raw(), sys::IPPROTO_IP, libc::IP_HDRINCL)
+            getsockopt::<c_int>(self.as_raw(), sys::IPPROTO_IP, sys::IP_HDRINCL)
                 .map(|included| included != 0)
         }
     }
@@ -1153,7 +1151,7 @@ impl Socket {
             setsockopt(
                 self.as_raw(),
                 sys::IPPROTO_IP,
-                libc::IP_HDRINCL,
+                sys::IP_HDRINCL,
                 included as c_int,
             )
         }
