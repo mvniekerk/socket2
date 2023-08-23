@@ -37,7 +37,7 @@ features = ["all"]
 [target.'cfg(any(unix, target_os = "wasi"))'.dependencies]
 # Temporary, must be updated to point to the official libc package as soon
 # as WASIX-related changes are merged in.
-libc = { git = "https://github.com/wasix-org/libc.git" }
+libc = { git = "https://github.com/wasix-org/libc.git", branch = "main" }
 
 [target.'cfg(windows)'.dependencies.windows-sys]
 version = "0.48"

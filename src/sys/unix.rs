@@ -300,10 +300,6 @@ const MAX_BUF_LEN: usize = c_int::MAX as usize - 1;
 #[cfg(all(feature = "all", any(target_os = "freebsd", target_os = "linux")))]
 const TCP_CA_NAME_MAX: usize = 16;
 
-// TCP_CA_NAME_MAX isn't defined in user space include files(not in libc)
-#[cfg(all(feature = "all", any(target_os = "freebsd", target_os = "linux")))]
-const TCP_CA_NAME_MAX: usize = 16;
-
 #[cfg(any(
     all(
         target_os = "linux",
