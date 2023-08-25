@@ -107,7 +107,7 @@ fn type_fmt_debug() {
         (Type::DGRAM, "SOCK_DGRAM"),
         #[cfg(feature = "all")]
         (Type::SEQPACKET, "SOCK_SEQPACKET"),
-        #[cfg(all(feature = "all", not(target_os = "redox")))]
+        #[cfg(all(feature = "all", not(any(target_os = "redox", target_os = "wasi"))))]
         (Type::RAW, "SOCK_RAW"),
         (500.into(), "500"),
     ];
@@ -1062,7 +1062,6 @@ fn device_v6() {
         target_os = "macos",
         target_os = "tvos",
         target_os = "watchos",
-        target_os = "wasi",
     )
 ))]
 #[test]
@@ -1137,7 +1136,6 @@ fn sendfile() {
         target_os = "freebsd",
         target_os = "fuchsia",
         target_os = "linux",
-        target_os = "wasi",
     )
 ))]
 #[test]
@@ -1178,7 +1176,6 @@ fn domain() {
         target_os = "freebsd",
         target_os = "fuchsia",
         target_os = "linux",
-        target_os = "wasi",
     )
 ))]
 #[test]
@@ -1227,7 +1224,7 @@ fn r#type() {
     }
 }
 
-#[cfg(all(feature = "all", any(target_os = "linux", target_os = "wasi")))]
+#[cfg(all(feature = "all", target_os = "linux"))]
 #[test]
 fn cpu_affinity() {
     let socket = Socket::new(Domain::IPV4, Type::STREAM, None).unwrap();
@@ -1512,7 +1509,7 @@ fn join_leave_ssm_v4() {
 }
 
 #[test]
-#[cfg(all(feature = "all", not(target_os = "redox")))]
+#[cfg(all(feature = "all", not(any(target_os = "redox", target_os = "wasi"))))]
 fn header_included() {
     let socket = match Socket::new(Domain::IPV4, Type::RAW, None) {
         Ok(socket) => socket,
