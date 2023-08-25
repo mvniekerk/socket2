@@ -13,16 +13,21 @@
     )
 ))]
 use std::fs::File;
+#[cfg(not(target_os = "wasi"))]
 use std::io;
-#[cfg(not(target_os = "redox"))]
+#[cfg(not(any(target_os = "redox", target_os = "wasi")))]
 use std::io::IoSlice;
 #[cfg(not(target_os = "wasi"))]
 use std::io::Read;
 use std::io::Write;
-use std::mem::{self, MaybeUninit};
-use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, TcpStream};
-#[cfg(not(target_os = "redox"))]
+use std::mem;
+#[cfg(not(target_os = "wasi"))]
+use std::mem::MaybeUninit;
+#[cfg(not(target_os = "wasi"))]
+use std::net::{Ipv4Addr, SocketAddrV4};
+#[cfg(not(any(target_os = "redox", target_os = "wasi")))]
 use std::net::{Ipv6Addr, SocketAddrV6};
+use std::net::{SocketAddr, TcpStream};
 #[cfg(all(
     feature = "all",
     any(
@@ -44,7 +49,9 @@ use std::os::windows::io::AsRawSocket;
 #[cfg(unix)]
 use std::path::Path;
 use std::str;
+#[cfg(not(target_os = "wasi"))]
 use std::thread;
+#[cfg(not(target_os = "wasi"))]
 use std::time::Duration;
 #[cfg(not(target_os = "wasi"))]
 use std::{env, fs};
@@ -52,9 +59,11 @@ use std::{env, fs};
 #[cfg(windows)]
 use windows_sys::Win32::Foundation::{GetHandleInformation, HANDLE_FLAG_INHERIT};
 
-#[cfg(not(target_os = "redox"))]
+#[cfg(not(any(target_os = "redox", target_os = "wasi")))]
 use socket2::MaybeUninitSlice;
-use socket2::{Domain, Protocol, SockAddr, Socket, TcpKeepalive, Type};
+use socket2::{Domain, Protocol, Socket, Type};
+#[cfg(not(target_os = "wasi"))]
+use socket2::{SockAddr, TcpKeepalive};
 
 #[test]
 fn domain_for_address() {
@@ -68,6 +77,7 @@ fn domain_for_address() {
 }
 
 #[test]
+#[cfg(not(target_os = "wasi"))]
 fn domain_fmt_debug() {
     let tests = &[
         (Domain::IPV4, "AF_INET"),
@@ -221,8 +231,9 @@ fn set_nonblocking() {
     assert_nonblocking(&socket, false);
 }
 
+#[cfg(not(target_os = "wasi"))]
 fn assert_common_flags(socket: &Socket, expected: bool) {
-    #[cfg(any(unix, target_os = "wasi"))]
+    #[cfg(unix)]
     assert_close_on_exec(socket, expected);
     #[cfg(any(
         target_os = "ios",
@@ -236,6 +247,7 @@ fn assert_common_flags(socket: &Socket, expected: bool) {
 }
 
 #[test]
+#[cfg(not(target_os = "wasi"))]
 fn common_flags() {
     let listener = Socket::new(Domain::IPV4, Type::STREAM, None).unwrap();
     assert_common_flags(&listener, true);
@@ -251,6 +263,7 @@ fn common_flags() {
 }
 
 #[test]
+#[cfg(not(target_os = "wasi"))]
 fn no_common_flags() {
     let listener = Socket::new_raw(Domain::IPV4, Type::STREAM, None).unwrap();
     assert_common_flags(&listener, false);
@@ -440,9 +453,11 @@ where
     assert_eq!(flags, want as _, "non-blocking option");
 }
 
+#[cfg(not(target_os = "wasi"))]
 const DATA: &[u8] = b"hello world";
 
 #[test]
+#[cfg(not(target_os = "wasi"))]
 fn connect_timeout_unrouteable() {
     // This IP is unroutable, so connections should always time out.
     let addr = "10.255.255.1:80".parse::<SocketAddr>().unwrap().into();
@@ -456,6 +471,7 @@ fn connect_timeout_unrouteable() {
 }
 
 #[test]
+#[cfg(not(target_os = "wasi"))]
 fn connect_timeout_unbound() {
     // Bind and drop a socket to track down a "probably unassigned" port.
     let socket = Socket::new(Domain::IPV4, Type::STREAM, None).unwrap();
@@ -475,6 +491,7 @@ fn connect_timeout_unbound() {
 }
 
 #[test]
+#[cfg(not(target_os = "wasi"))]
 fn connect_timeout_valid() {
     let socket = Socket::new(Domain::IPV4, Type::STREAM, None).unwrap();
     socket
@@ -573,6 +590,7 @@ fn vsock() {
 }
 
 #[test]
+#[cfg(not(target_os = "wasi"))]
 fn out_of_band() {
     let listener = Socket::new(Domain::IPV4, Type::STREAM, None).unwrap();
     listener.bind(&any_ipv4()).unwrap();
@@ -618,7 +636,7 @@ fn udp_peek_sender() {
 }
 
 #[test]
-#[cfg(not(target_os = "redox"))]
+#[cfg(not(any(target_os = "redox", target_os = "wasi")))]
 fn send_recv_vectored() {
     let (socket_a, socket_b) = udp_pair_connected();
 
@@ -665,7 +683,7 @@ fn send_recv_vectored() {
 }
 
 #[test]
-#[cfg(not(target_os = "redox"))]
+#[cfg(not(any(target_os = "redox", target_os = "wasi")))]
 fn send_from_recv_to_vectored() {
     let (socket_a, socket_b) = udp_pair_unconnected();
     let addr_a = socket_a.local_addr().unwrap();
@@ -732,7 +750,7 @@ fn sendmsg() {
 }
 
 #[test]
-#[cfg(not(target_os = "redox"))]
+#[cfg(not(any(target_os = "redox", target_os = "wasi")))]
 fn recv_vectored_truncated() {
     let (socket_a, socket_b) = udp_pair_connected();
 
@@ -752,7 +770,7 @@ fn recv_vectored_truncated() {
 }
 
 #[test]
-#[cfg(not(target_os = "redox"))]
+#[cfg(not(any(target_os = "redox", target_os = "wasi")))]
 fn recv_from_vectored_truncated() {
     let (socket_a, socket_b) = udp_pair_unconnected();
     let addr_a = socket_a.local_addr().unwrap();
@@ -778,7 +796,7 @@ fn recv_from_vectored_truncated() {
 }
 
 /// Create a pair of non-connected UDP sockets suitable for unit tests.
-#[cfg(not(target_os = "redox"))]
+#[cfg(not(any(target_os = "redox", target_os = "wasi")))]
 fn udp_pair_unconnected() -> (Socket, Socket) {
     // Use ephemeral ports assigned by the OS.
     let unspecified_addr = SocketAddrV6::new(Ipv6Addr::LOCALHOST, 0, 0, 0);
@@ -806,7 +824,7 @@ fn udp_pair_unconnected() -> (Socket, Socket) {
 }
 
 /// Create a pair of connected UDP sockets suitable for unit tests.
-#[cfg(not(target_os = "redox"))]
+#[cfg(not(any(target_os = "redox", target_os = "wasi")))]
 fn udp_pair_connected() -> (Socket, Socket) {
     let (socket_a, socket_b) = udp_pair_unconnected();
 
@@ -819,6 +837,7 @@ fn udp_pair_connected() -> (Socket, Socket) {
 }
 
 #[test]
+#[cfg(not(target_os = "wasi"))]
 fn tcp_keepalive() {
     let socket = Socket::new(Domain::IPV4, Type::STREAM, None).unwrap();
     let params = TcpKeepalive::new().with_time(Duration::from_secs(200));
@@ -1183,6 +1202,7 @@ fn protocol() {
 }
 
 #[test]
+#[cfg(not(target_os = "wasi"))]
 fn r#type() {
     let socket = Socket::new(Domain::IPV4, Type::STREAM, None).unwrap();
     assert_eq!(socket.r#type().unwrap(), Type::STREAM);
@@ -1227,12 +1247,14 @@ fn niche() {
     }
 }
 
+#[cfg(not(target_os = "wasi"))]
 fn any_ipv4() -> SockAddr {
     SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0).into()
 }
 
 /// Assume the `buf`fer to be initialised.
 // TODO: replace with `MaybeUninit::slice_assume_init_ref` once stable.
+#[cfg(not(target_os = "wasi"))]
 unsafe fn assume_init(buf: &[MaybeUninit<u8>]) -> &[u8] {
     &*(buf as *const [MaybeUninit<u8>] as *const [u8])
 }
@@ -1281,26 +1303,30 @@ macro_rules! test {
     };
 }
 
+#[cfg(not(target_os = "wasi"))]
 const SET_BUF_SIZE: usize = 4096;
 // Linux doubles the buffer size for kernel usage, and exposes that when
 // retrieving the buffer size.
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "wasi")))]
 const GET_BUF_SIZE: usize = SET_BUF_SIZE;
 #[cfg(target_os = "linux")]
 const GET_BUF_SIZE: usize = 2 * SET_BUF_SIZE;
 
+#[cfg(not(target_os = "wasi"))]
 test!(nodelay, set_nodelay(true));
+#[cfg(not(target_os = "wasi"))]
 test!(
     recv_buffer_size,
     set_recv_buffer_size(SET_BUF_SIZE),
     GET_BUF_SIZE
 );
+#[cfg(not(target_os = "wasi"))]
 test!(
     send_buffer_size,
     set_send_buffer_size(SET_BUF_SIZE),
     GET_BUF_SIZE
 );
-#[cfg(not(target_os = "redox"))]
+#[cfg(not(any(target_os = "redox", target_os = "wasi")))]
 test!(out_of_band_inline, set_out_of_band_inline(true));
 test!(reuse_address, set_reuse_address(true));
 #[cfg(all(
@@ -1343,17 +1369,21 @@ test!(quickack, set_quickack(false));
     any(target_os = "android", target_os = "fuchsia", target_os = "linux")
 ))]
 test!(thin_linear_timeouts, set_thin_linear_timeouts(true));
+#[cfg(not(target_os = "wasi"))]
 test!(linger, set_linger(Some(Duration::from_secs(10))));
+#[cfg(not(target_os = "wasi"))]
 test!(
     read_timeout,
     set_read_timeout(Some(Duration::from_secs(10)))
 );
+#[cfg(not(target_os = "wasi"))]
 test!(keepalive, set_keepalive(true));
 #[cfg(all(feature = "all", any(target_os = "fuchsia", target_os = "linux")))]
 test!(freebind, set_freebind(true));
 #[cfg(all(feature = "all", target_os = "linux"))]
 test!(IPv6 freebind_ipv6, set_freebind_ipv6(true));
 
+#[cfg(not(target_os = "wasi"))]
 test!(IPv4 ttl, set_ttl(40));
 
 #[cfg(not(any(
@@ -1361,6 +1391,7 @@ test!(IPv4 ttl, set_ttl(40));
     target_os = "redox",
     target_os = "solaris",
     target_os = "illumos",
+    target_os = "wasi",
 )))]
 test!(IPv4 tos, set_tos(96));
 
@@ -1372,19 +1403,22 @@ test!(IPv4 tos, set_tos(96));
     target_os = "openbsd",
     target_os = "redox",
     target_os = "solaris",
+    target_os = "wasi",
     target_os = "windows",
 )))]
 test!(IPv4 recv_tos, set_recv_tos(true));
 
-#[cfg(not(windows))] // TODO: returns `WSAENOPROTOOPT` (10042) on Windows.
+#[cfg(not(any(windows, target_os = "wasi")))] // TODO: returns `WSAENOPROTOOPT` (10042) on Windows.
 test!(IPv4 broadcast, set_broadcast(true));
 
+#[cfg(not(target_os = "wasi"))]
 test!(IPv6 unicast_hops_v6, set_unicast_hops_v6(20));
 #[cfg(not(any(
     windows,
     target_os = "dragonfly",
     target_os = "freebsd",
-    target_os = "openbsd"
+    target_os = "openbsd",
+    target_os = "wasi",
 )))]
 test!(IPv6 only_v6, set_only_v6(true));
 // IPv6 socket are already IPv6 only on FreeBSD and Windows.
@@ -1436,6 +1470,7 @@ test!(
     target_os = "openbsd",
     target_os = "redox",
     target_os = "solaris",
+    target_os = "wasi",
 )))]
 fn join_leave_multicast_v4_n() {
     let socket = Socket::new(Domain::IPV4, Type::DGRAM, None).unwrap();
@@ -1465,6 +1500,7 @@ fn join_leave_multicast_v4_n() {
     target_os = "openbsd",
     target_os = "redox",
     target_os = "fuchsia",
+    target_os = "wasi",
 )))]
 fn join_leave_ssm_v4() {
     let socket = Socket::new(Domain::IPV4, Type::DGRAM, None).unwrap();
