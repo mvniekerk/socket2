@@ -1,4 +1,8 @@
 #![allow(clippy::bool_assert_comparison)]
+
+#[cfg(target_os = "wasi")]
+extern crate libc_wasix as libc;
+
 #[cfg(all(
     feature = "all",
     any(

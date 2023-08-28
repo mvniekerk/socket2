@@ -174,6 +174,9 @@ mod sockaddr;
 mod socket;
 mod sockref;
 
+#[cfg(target_os = "wasi")]
+extern crate libc_wasix as libc;
+
 #[cfg_attr(unix, path = "sys/unix.rs")]
 #[cfg_attr(windows, path = "sys/windows.rs")]
 #[cfg_attr(target_os = "wasi", path = "sys/wasi.rs")]
