@@ -109,7 +109,7 @@ fn type_fmt_debug() {
     let tests = &[
         (Type::STREAM, "SOCK_STREAM"),
         (Type::DGRAM, "SOCK_DGRAM"),
-        #[cfg(feature = "all")]
+        #[cfg(all(feature = "all", not(any(target_os = "redox", target_os = "wasi"))))]
         (Type::SEQPACKET, "SOCK_SEQPACKET"),
         #[cfg(all(feature = "all", not(any(target_os = "redox", target_os = "wasi"))))]
         (Type::RAW, "SOCK_RAW"),
@@ -290,7 +290,6 @@ fn no_common_flags() {
         target_os = "freebsd",
         target_os = "fuchsia",
         target_os = "linux",
-        target_os = "wasi",
         target_os = "netbsd",
         target_os = "openbsd"
     )
