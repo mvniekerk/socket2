@@ -52,7 +52,8 @@ jobs:
     - uses: dtolnay/rust-toolchain@stable
     - uses: taiki-e/install-action@cargo-hack
     - uses: wasmerio/setup-wasmer@v2
-    - run: cargo install cargo-wasix
+    - name: Install cargo-wasix
+      run: curl --proto '=https' --tlsv1.2 -LsSf https://github.com/wasix-org/cargo-wasix/releases/latest/download/cargo-wasix-installer.sh | sh
     - run: cargo wasix download-toolchain
     - name: Run tests
       run: cargo +wasix hack test --feature-powerset --target wasm32-wasmer-wasi -- -- --nocapture && cargo +wasix hack test --feature-powerset --release --target wasm32-wasmer-wasi -- -- --nocapture
@@ -86,7 +87,8 @@ jobs:
     - uses: actions/checkout@v3
     - uses: dtolnay/rust-toolchain@stable
     - uses: taiki-e/install-action@cargo-hack
-    - run: cargo install cargo-wasix
+    - name: Install cargo-wasix
+      run: curl --proto '=https' --tlsv1.2 -LsSf https://github.com/wasix-org/cargo-wasix/releases/latest/download/cargo-wasix-installer.sh | sh
     - run: cargo wasix download-toolchain
     - name: Run check
       run: cargo +wasix hack check --feature-powerset --all-targets --examples --bins --tests --target wasm32-wasmer-wasi
