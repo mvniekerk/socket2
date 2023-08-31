@@ -42,6 +42,21 @@ jobs:
     - uses: taiki-e/install-action@cargo-hack
     - name: Run tests
       run: cargo hack test --feature-powerset && cargo hack test --feature-powerset --release
+  Test-Wasix:
+    name: Test (wasix)
+    runs-on: ubuntu-latest
+    env:
+      CARGO_TARGET_WASM32_WASMER_WASI_RUNNER: wasmer run --env RUST_BACKTRACE=1 --net
+    steps:
+    - uses: actions/checkout@v3
+    - uses: dtolnay/rust-toolchain@stable
+    - uses: taiki-e/install-action@cargo-hack
+    - uses: wasmerio/setup-wasmer@v2
+    - name: Install cargo-wasix
+      run: curl --proto '=https' --tlsv1.2 -LsSf https://github.com/wasix-org/cargo-wasix/releases/latest/download/cargo-wasix-installer.sh | sh
+    - run: cargo wasix download-toolchain
+    - name: Run tests
+      run: cargo +wasix hack test --feature-powerset --target wasm32-wasmer-wasi -- -- --nocapture && cargo +wasix hack test --feature-powerset --release --target wasm32-wasmer-wasi -- -- --nocapture
   Rustfmt:
     name: Rustfmt
     runs-on: ubuntu-latest
@@ -65,6 +80,18 @@ jobs:
     - uses: taiki-e/install-action@cargo-hack
     - name: Run check
       run: cargo hack check --feature-powerset --all-targets --examples --bins --tests --target ${{ matrix.target }}
+  Check-Wasix:
+    name: Check (wasix)
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+    - uses: dtolnay/rust-toolchain@stable
+    - uses: taiki-e/install-action@cargo-hack
+    - name: Install cargo-wasix
+      run: curl --proto '=https' --tlsv1.2 -LsSf https://github.com/wasix-org/cargo-wasix/releases/latest/download/cargo-wasix-installer.sh | sh
+    - run: cargo wasix download-toolchain
+    - name: Run check
+      run: cargo +wasix hack check --feature-powerset --all-targets --examples --bins --tests --target wasm32-wasmer-wasi
   Clippy:
     name: Clippy
     runs-on: ubuntu-latest

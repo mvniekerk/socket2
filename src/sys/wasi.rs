@@ -5,8 +5,8 @@ use std::marker::PhantomData;
 use std::mem::{self, size_of, MaybeUninit};
 use std::net::Shutdown;
 use std::net::{Ipv4Addr, Ipv6Addr};
-use std::num::NonZeroUsize;
 use std::num::NonZeroU32;
+use std::num::NonZeroUsize;
 use std::os::wasi::io::RawFd;
 use std::os::wasi::io::{AsFd, AsRawFd, BorrowedFd, FromRawFd, IntoRawFd, OwnedFd};
 use std::path::Path;
@@ -40,6 +40,7 @@ pub(crate) use libc::{
 // Used in `RecvFlags`.
 pub(crate) use libc::{MSG_TRUNC, SO_OOBINLINE};
 // Used in `Socket`.
+pub(crate) use libc::IP_HDRINCL;
 pub(crate) use libc::IP_RECVTOS;
 pub(crate) use libc::IP_TOS;
 pub(crate) use libc::SO_LINGER;
@@ -102,12 +103,7 @@ impl Type {
     }
 }
 
-impl_debug!(
-    Type,
-    libc::SOCK_STREAM,
-    libc::SOCK_DGRAM,
-    libc::SOCK_RAW,
-);
+impl_debug!(Type, libc::SOCK_STREAM, libc::SOCK_DGRAM, libc::SOCK_RAW,);
 
 impl_debug!(
     Protocol,
@@ -220,7 +216,6 @@ impl SockAddr {
         .map(|(_, addr)| addr)
     }
 }
-
 
 pub(crate) type Socket = c_int;
 

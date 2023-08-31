@@ -206,6 +206,7 @@ impl SockAddr {
     pub fn is_unix(&self) -> bool {
         self.storage.ss_family == AF_UNIX as sa_family_t
     }
+
     /// Returns a raw pointer to the address storage.
     #[cfg(target_os = "wasi")]
     pub(crate) const fn as_storage_ptr(&self) -> *const sockaddr_storage {

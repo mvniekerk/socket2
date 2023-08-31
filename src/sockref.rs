@@ -2,12 +2,10 @@ use std::fmt;
 use std::marker::PhantomData;
 use std::mem::ManuallyDrop;
 use std::ops::Deref;
-#[cfg(unix)]
+#[cfg(any(unix, target_os = "wasi"))]
 use std::os::unix::io::{AsFd, AsRawFd, FromRawFd};
 #[cfg(windows)]
 use std::os::windows::io::{AsRawSocket, AsSocket, FromRawSocket};
-#[cfg(target_os = "wasi")]
-use std::os::wasi::io::{AsFd, AsRawFd, FromRawFd};
 
 use crate::Socket;
 
