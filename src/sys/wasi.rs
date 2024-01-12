@@ -155,6 +155,33 @@ impl<'a> MaybeUninitSlice<'a> {
     }
 }
 
+// Used in `MsgHdr`.
+pub(crate) use libc::msghdr;
+
+pub(crate) fn set_msghdr_name(msg: &mut msghdr, name: &SockAddr) {
+    msg.msg_name = name.as_ptr() as *mut _;
+    msg.msg_namelen = name.len();
+}
+
+#[allow(clippy::unnecessary_cast)] // IovLen type can be `usize`.
+pub(crate) fn set_msghdr_iov(msg: &mut msghdr, ptr: *mut libc::iovec, len: usize) {
+    msg.msg_iov = ptr;
+    msg.msg_iovlen = min(len, IovLen::MAX as usize) as IovLen;
+}
+
+pub(crate) fn set_msghdr_control(msg: &mut msghdr, ptr: *mut libc::c_void, len: usize) {
+    msg.msg_control = ptr as *mut u8;
+    msg.msg_controllen = len as _;
+}
+
+pub(crate) fn set_msghdr_flags(msg: &mut msghdr, flags: libc::c_int) {
+    msg.msg_flags = flags;
+}
+
+pub(crate) fn msghdr_flags(msg: &msghdr) -> RecvFlags {
+    RecvFlags(msg.msg_flags)
+}
+
 /// Unix only API.
 impl SockAddr {
     /// Constructs a `SockAddr` with the family `AF_UNIX` and the provided path.
@@ -412,7 +439,7 @@ pub(crate) fn recv_from_vectored(
 }
 
 /// Returns the (bytes received, sending address len, `RecvFlags`).
-fn recvmsg(
+pub(crate) fn recvmsg(
     fd: Socket,
     msg_name: *mut sockaddr_storage,
     bufs: &mut [crate::MaybeUninitSlice<'_>],
@@ -444,7 +471,7 @@ pub(crate) fn send(fd: Socket, buf: &[u8], flags: c_int) -> io::Result<usize> {
 }
 
 pub(crate) fn send_vectored(fd: Socket, bufs: &[IoSlice<'_>], flags: c_int) -> io::Result<usize> {
-    sendmsg(fd, ptr::null(), 0, bufs, flags)
+    sendmsg_internal(fd, ptr::null(), 0, bufs, flags)
 }
 
 pub(crate) fn send_to(fd: Socket, buf: &[u8], addr: &SockAddr, flags: c_int) -> io::Result<usize> {
@@ -465,11 +492,16 @@ pub(crate) fn send_to_vectored(
     addr: &SockAddr,
     flags: c_int,
 ) -> io::Result<usize> {
-    sendmsg(fd, addr.as_storage_ptr(), addr.len(), bufs, flags)
+    let msg = crate::MsgHdr::new().with_addr(addr).with_buffers(bufs);
+    sendmsg(fd, &msg, flags)
+}
+
+pub(crate) fn sendmsg(fd: Socket, msg: &crate::MsgHdr<'_, '_, '_>, flags: c_int) -> io::Result<usize> {
+    syscall!(sendmsg(fd, &msg.inner, flags)).map(|n| n as usize)
 }
 
 /// Returns the (bytes received, sending address len, `RecvFlags`).
-fn sendmsg(
+fn sendmsg_internal(
     fd: Socket,
     msg_name: *const sockaddr_storage,
     msg_namelen: socklen_t,

@@ -14,13 +14,15 @@
 ))]
 use std::fs::File;
 use std::io;
-#[cfg(not(target_os = "redox"))]
+#[cfg(not(any(target_os = "redox", target_os = "vita")))]
 use std::io::IoSlice;
 use std::io::Read;
 use std::io::Write;
-use std::mem::{self, MaybeUninit};
+#[cfg(not(target_os = "vita"))]
+use std::mem::MaybeUninit;
+use std::mem::{self};
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, TcpStream};
-#[cfg(not(target_os = "redox"))]
+#[cfg(not(any(target_os = "redox", target_os = "vita")))]
 use std::net::{Ipv6Addr, SocketAddrV6};
 #[cfg(all(
     feature = "all",
@@ -43,6 +45,7 @@ use std::os::windows::io::AsRawSocket;
 #[cfg(any(unix, target_os = "wasi"))]
 use std::path::Path;
 use std::str;
+#[cfg(not(target_os = "vita"))]
 use std::thread;
 use std::time::Duration;
 use std::{env, fs};
@@ -50,9 +53,11 @@ use std::{env, fs};
 #[cfg(windows)]
 use windows_sys::Win32::Foundation::{GetHandleInformation, HANDLE_FLAG_INHERIT};
 
-#[cfg(not(target_os = "redox"))]
+#[cfg(not(any(target_os = "redox", target_os = "vita")))]
 use socket2::MaybeUninitSlice;
-use socket2::{Domain, Protocol, SockAddr, Socket, TcpKeepalive, Type};
+#[cfg(not(target_os = "vita"))]
+use socket2::TcpKeepalive;
+use socket2::{Domain, Protocol, SockAddr, Socket, Type};
 
 #[test]
 fn domain_for_address() {
@@ -218,7 +223,7 @@ fn set_nonblocking() {
 }
 
 fn assert_common_flags(socket: &Socket, expected: bool) {
-    #[cfg(unix)]
+    #[cfg(all(unix, not(target_os = "vita")))]
     assert_close_on_exec(socket, expected);
     #[cfg(any(
         target_os = "ios",
@@ -229,6 +234,13 @@ fn assert_common_flags(socket: &Socket, expected: bool) {
     assert_flag_no_sigpipe(socket, expected);
     #[cfg(windows)]
     assert_flag_no_inherit(socket, expected);
+
+    // Vita does not have process API, so neither SO_NOSIGPIPE nor FD_CLOEXEC are supported on this platform
+    #[cfg(target_os = "vita")]
+    {
+        let _ = socket;
+        let _ = expected;
+    }
 }
 
 #[test]
@@ -287,10 +299,29 @@ fn type_nonblocking() {
 pub fn assert_nonblocking(socket: &Socket, want: bool) {
     #[cfg(all(feature = "all", unix))]
     assert_eq!(socket.nonblocking().unwrap(), want, "non-blocking option");
-    #[cfg(not(all(feature = "all", unix)))]
+
+    #[cfg(not(any(all(feature = "all", unix), target_os = "vita")))]
     {
         let flags = unsafe { libc::fcntl(socket.as_raw_fd(), libc::F_GETFL) };
         assert_eq!(flags & libc::O_NONBLOCK != 0, want, "non-blocking option");
+    }
+
+    #[cfg(all(target_os = "vita", not(feature = "all")))]
+    {
+        let mut optval: libc::c_int = 0;
+        let mut optlen = std::mem::size_of::<libc::c_int>() as libc::socklen_t;
+
+        let res = unsafe {
+            libc::getsockopt(
+                socket.as_raw_fd(),
+                libc::SOL_SOCKET,
+                libc::SO_NONBLOCK,
+                &mut optval as *mut libc::c_int as _,
+                &mut optlen,
+            )
+        };
+        assert_eq!(res, 0, "unable to get non-blocing option");
+        assert_eq!(optval > 0, want, "non-blocking option");
     }
 }
 
@@ -300,7 +331,7 @@ pub fn assert_nonblocking(_: &Socket, _: bool) {
     // No way to get this information...
 }
 
-#[cfg(all(unix, feature = "all"))]
+#[cfg(all(unix, feature = "all", not(target_os = "vita")))]
 #[test]
 fn set_cloexec() {
     let socket = Socket::new(Domain::IPV4, Type::STREAM, None).unwrap();
@@ -452,6 +483,7 @@ fn connect_timeout_unrouteable() {
 }
 
 #[test]
+#[cfg(not(target_os = "vita"))] // Loopback has special behavior on vita
 fn connect_timeout_unbound() {
     // Bind and drop a socket to track down a "probably unassigned" port.
     let socket = Socket::new(Domain::IPV4, Type::STREAM, None).unwrap();
@@ -512,6 +544,11 @@ fn unix_sockets_supported() -> bool {
             Err(err) => panic!("socket error: {err}"),
         }
     }
+
+    #[cfg(target_os = "vita")]
+    return false;
+
+    #[cfg(not(target_os = "vita"))]
     true
 }
 
@@ -567,6 +604,7 @@ fn vsock() {
 }
 
 #[test]
+#[cfg(not(target_os = "vita"))] // Vita does not support OOB
 fn out_of_band() {
     let listener = Socket::new(Domain::IPV4, Type::STREAM, None).unwrap();
     listener.bind(&any_ipv4()).unwrap();
@@ -597,7 +635,7 @@ fn out_of_band() {
 }
 
 #[test]
-#[cfg(not(target_os = "redox"))] // cfg of `udp_pair_unconnected()`
+#[cfg(not(any(target_os = "redox", target_os = "vita")))]
 fn udp_peek_sender() {
     let (socket_a, socket_b) = udp_pair_unconnected();
 
@@ -612,7 +650,7 @@ fn udp_peek_sender() {
 }
 
 #[test]
-#[cfg(not(target_os = "redox"))]
+#[cfg(not(any(target_os = "redox", target_os = "vita")))]
 fn send_recv_vectored() {
     let (socket_a, socket_b) = udp_pair_connected();
 
@@ -659,7 +697,7 @@ fn send_recv_vectored() {
 }
 
 #[test]
-#[cfg(not(target_os = "redox"))]
+#[cfg(not(any(target_os = "redox", target_os = "vita")))]
 fn send_from_recv_to_vectored() {
     let (socket_a, socket_b) = udp_pair_unconnected();
     let addr_a = socket_a.local_addr().unwrap();
@@ -708,7 +746,25 @@ fn send_from_recv_to_vectored() {
 }
 
 #[test]
-#[cfg(not(target_os = "redox"))]
+#[cfg(not(any(target_os = "redox", target_os = "vita")))]
+fn sendmsg() {
+    let (socket_a, socket_b) = udp_pair_unconnected();
+
+    const DATA: &[u8] = b"Hello, World!";
+
+    let bufs = &[IoSlice::new(DATA)];
+    let addr_b = socket_b.local_addr().unwrap();
+    let msg = socket2::MsgHdr::new().with_addr(&addr_b).with_buffers(bufs);
+    let sent = socket_a.sendmsg(&msg, 0).unwrap();
+    assert_eq!(sent, DATA.len());
+
+    let mut buf = Vec::with_capacity(DATA.len() + 1);
+    let received = socket_b.recv(buf.spare_capacity_mut()).unwrap();
+    assert_eq!(received, DATA.len());
+}
+
+#[test]
+#[cfg(not(any(target_os = "redox", target_os = "vita")))]
 fn recv_vectored_truncated() {
     let (socket_a, socket_b) = udp_pair_connected();
 
@@ -728,7 +784,7 @@ fn recv_vectored_truncated() {
 }
 
 #[test]
-#[cfg(not(target_os = "redox"))]
+#[cfg(not(any(target_os = "redox", target_os = "vita")))]
 fn recv_from_vectored_truncated() {
     let (socket_a, socket_b) = udp_pair_unconnected();
     let addr_a = socket_a.local_addr().unwrap();
@@ -754,7 +810,7 @@ fn recv_from_vectored_truncated() {
 }
 
 /// Create a pair of non-connected UDP sockets suitable for unit tests.
-#[cfg(not(target_os = "redox"))]
+#[cfg(not(any(target_os = "redox", target_os = "vita")))]
 fn udp_pair_unconnected() -> (Socket, Socket) {
     // Use ephemeral ports assigned by the OS.
     let unspecified_addr = SocketAddrV6::new(Ipv6Addr::LOCALHOST, 0, 0, 0);
@@ -782,7 +838,7 @@ fn udp_pair_unconnected() -> (Socket, Socket) {
 }
 
 /// Create a pair of connected UDP sockets suitable for unit tests.
-#[cfg(not(target_os = "redox"))]
+#[cfg(not(any(target_os = "redox", target_os = "vita")))]
 fn udp_pair_connected() -> (Socket, Socket) {
     let (socket_a, socket_b) = udp_pair_unconnected();
 
@@ -795,6 +851,7 @@ fn udp_pair_connected() -> (Socket, Socket) {
 }
 
 #[test]
+#[cfg(not(target_os = "vita"))]
 fn tcp_keepalive() {
     let socket = Socket::new(Domain::IPV4, Type::STREAM, None).unwrap();
     let params = TcpKeepalive::new().with_time(Duration::from_secs(200));
@@ -934,7 +991,7 @@ fn device() {
     const INTERFACES: &[&str] = &["lo\0", "lo0\0", "en0\0"];
 
     let socket = Socket::new(Domain::IPV4, Type::STREAM, None).unwrap();
-    assert_eq!(socket.device_index().unwrap(), None);
+    assert_eq!(socket.device_index_v4().unwrap(), None);
 
     for interface in INTERFACES.iter() {
         let iface_index = std::num::NonZeroU32::new(unsafe {
@@ -944,7 +1001,7 @@ fn device() {
         if iface_index.is_none() {
             continue;
         }
-        if let Err(err) = socket.bind_device_by_index(iface_index) {
+        if let Err(err) = socket.bind_device_by_index_v4(iface_index) {
             // Network interface is not available try another.
             if matches!(err.raw_os_error(), Some(libc::ENODEV)) {
                 eprintln!("error binding to device (`{interface}`): {err}");
@@ -953,10 +1010,55 @@ fn device() {
                 panic!("unexpected error binding device: {}", err);
             }
         }
-        assert_eq!(socket.device_index().unwrap(), iface_index);
+        assert_eq!(socket.device_index_v4().unwrap(), iface_index);
 
-        socket.bind_device_by_index(None).unwrap();
-        assert_eq!(socket.device_index().unwrap(), None);
+        socket.bind_device_by_index_v4(None).unwrap();
+        assert_eq!(socket.device_index_v4().unwrap(), None);
+        // Just need to do it with one interface.
+        return;
+    }
+
+    panic!("failed to bind to any device.");
+}
+
+#[cfg(all(
+    feature = "all",
+    any(
+        target_os = "ios",
+        target_os = "macos",
+        target_os = "tvos",
+        target_os = "watchos",
+    )
+))]
+#[test]
+fn device_v6() {
+    // Some common network interface on macOS.
+    const INTERFACES: &[&str] = &["lo\0", "lo0\0", "en0\0"];
+
+    let socket = Socket::new(Domain::IPV6, Type::STREAM, None).unwrap();
+    assert_eq!(socket.device_index_v6().unwrap(), None);
+
+    for interface in INTERFACES.iter() {
+        let iface_index = std::num::NonZeroU32::new(unsafe {
+            libc::if_nametoindex(interface.as_ptr() as *const _)
+        });
+        // If no index is returned, try another interface alias
+        if iface_index.is_none() {
+            continue;
+        }
+        if let Err(err) = socket.bind_device_by_index_v6(iface_index) {
+            // Network interface is not available try another.
+            if matches!(err.raw_os_error(), Some(libc::ENODEV)) {
+                eprintln!("error binding to device (`{interface}`): {err}");
+                continue;
+            } else {
+                panic!("unexpected error binding device: {}", err);
+            }
+        }
+        assert_eq!(socket.device_index_v6().unwrap(), iface_index);
+
+        socket.bind_device_by_index_v6(None).unwrap();
+        assert_eq!(socket.device_index_v6().unwrap(), None);
         // Just need to do it with one interface.
         return;
     }
@@ -1092,6 +1194,7 @@ fn domain() {
         target_os = "fuchsia",
         target_os = "linux",
         target_os = "wasi",
+        target_os = "windows",
     )
 ))]
 #[test]
@@ -1119,8 +1222,11 @@ fn r#type() {
     let socket = Socket::new(Domain::IPV4, Type::STREAM, None).unwrap();
     assert_eq!(socket.r#type().unwrap(), Type::STREAM);
 
-    let socket = Socket::new(Domain::IPV6, Type::DGRAM, None).unwrap();
-    assert_eq!(socket.r#type().unwrap(), Type::DGRAM);
+    #[cfg(not(target_os = "vita"))]
+    {
+        let socket = Socket::new(Domain::IPV6, Type::DGRAM, None).unwrap();
+        assert_eq!(socket.r#type().unwrap(), Type::DGRAM);
+    }
 
     // macos doesn't support seqpacket
     #[cfg(all(
@@ -1130,6 +1236,7 @@ fn r#type() {
             target_os = "macos",
             target_os = "tvos",
             target_os = "watchos",
+            target_os = "vita",
         )),
         feature = "all",
     ))]
@@ -1165,6 +1272,7 @@ fn any_ipv4() -> SockAddr {
 
 /// Assume the `buf`fer to be initialised.
 // TODO: replace with `MaybeUninit::slice_assume_init_ref` once stable.
+#[cfg(not(target_os = "vita"))] // Loopback has special behavior on vita
 unsafe fn assume_init(buf: &[MaybeUninit<u8>]) -> &[u8] {
     &*(buf as *const [MaybeUninit<u8>] as *const [u8])
 }
@@ -1180,6 +1288,7 @@ macro_rules! test {
         $( #[$attr] )*
         fn $get_fn() {
             test!(__ Domain::IPV4, $get_fn, $set_fn($arg), $expected);
+            #[cfg(not(target_os = "vita"))]
             test!(__ Domain::IPV6, $get_fn, $set_fn($arg), $expected);
         }
     };
@@ -1240,6 +1349,8 @@ test!(reuse_address, set_reuse_address(true));
     not(any(windows, target_os = "solaris", target_os = "illumos"))
 ))]
 test!(reuse_port, set_reuse_port(true));
+#[cfg(all(feature = "all", target_os = "freebsd"))]
+test!(reuse_port_lb, set_reuse_port_lb(true));
 #[cfg(all(feature = "all", unix, not(target_os = "redox")))]
 test!(
     #[cfg_attr(target_os = "linux", ignore = "Different value returned")]
@@ -1281,7 +1392,7 @@ test!(
 test!(keepalive, set_keepalive(true));
 #[cfg(all(feature = "all", any(target_os = "fuchsia", target_os = "linux")))]
 test!(freebind, set_freebind(true));
-#[cfg(all(feature = "all", any(target_os = "linux")))]
+#[cfg(all(feature = "all", target_os = "linux"))]
 test!(IPv6 freebind_ipv6, set_freebind_ipv6(true));
 
 test!(IPv4 ttl, set_ttl(40));
@@ -1303,18 +1414,22 @@ test!(IPv4 tos, set_tos(96));
     target_os = "redox",
     target_os = "solaris",
     target_os = "windows",
+    target_os = "vita",
 )))]
 test!(IPv4 recv_tos, set_recv_tos(true));
 
 #[cfg(not(windows))] // TODO: returns `WSAENOPROTOOPT` (10042) on Windows.
 test!(IPv4 broadcast, set_broadcast(true));
 
+#[cfg(not(target_os = "vita"))]
 test!(IPv6 unicast_hops_v6, set_unicast_hops_v6(20));
+
 #[cfg(not(any(
     windows,
     target_os = "dragonfly",
     target_os = "freebsd",
-    target_os = "openbsd"
+    target_os = "openbsd",
+    target_os = "vita"
 )))]
 test!(IPv6 only_v6, set_only_v6(true));
 // IPv6 socket are already IPv6 only on FreeBSD and Windows.
@@ -1345,6 +1460,7 @@ test!(IPv6 tclass_v6, set_tclass_v6(96));
     target_os = "redox",
     target_os = "solaris",
     target_os = "windows",
+    target_os = "vita",
 )))]
 test!(IPv6 recv_tclass_v6, set_recv_tclass_v6(true));
 
@@ -1365,6 +1481,7 @@ test!(
     target_os = "openbsd",
     target_os = "redox",
     target_os = "solaris",
+    target_os = "vita",
 )))]
 fn join_leave_multicast_v4_n() {
     let socket = Socket::new(Domain::IPV4, Type::DGRAM, None).unwrap();
@@ -1394,6 +1511,7 @@ fn join_leave_multicast_v4_n() {
     target_os = "openbsd",
     target_os = "redox",
     target_os = "fuchsia",
+    target_os = "vita",
 )))]
 fn join_leave_ssm_v4() {
     let socket = Socket::new(Domain::IPV4, Type::DGRAM, None).unwrap();
