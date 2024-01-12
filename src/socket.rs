@@ -629,7 +629,7 @@ impl Socket {
     /// but suppresses the `WSAEMSGSIZE` error on Windows.
     ///
     /// [`peek_from`]: Socket::peek_from
-    #[cfg(not(target_os = "wasi"))]
+    #[cfg(not(all(target_os = "wasi", target_vendor = "wasmer")))]
     pub fn peek_sender(&self) -> io::Result<SockAddr> {
         sys::peek_sender(self.as_raw())
     }
