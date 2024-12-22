@@ -107,7 +107,7 @@ macro_rules! from {
     ($from: ty, $for: ty) => {
         impl From<$from> for $for {
             fn from(socket: $from) -> $for {
-                #[cfg(any(unix, target_os="wasi"))]
+                #[cfg(any(unix, target_os = "wasi"))]
                 unsafe {
                     <$for>::from_raw_fd(socket.into_raw_fd())
                 }
@@ -173,6 +173,9 @@ macro_rules! man_links {
 mod sockaddr;
 mod socket;
 mod sockref;
+
+#[cfg(all(target_os = "wasi", not(target_vendor = "wasmer")))]
+extern crate libc_wasix as libc;
 
 #[cfg_attr(unix, path = "sys/unix.rs")]
 #[cfg_attr(windows, path = "sys/windows.rs")]
