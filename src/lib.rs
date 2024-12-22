@@ -174,7 +174,7 @@ mod sockaddr;
 mod socket;
 mod sockref;
 
-#[cfg(target_os = "wasi")]
+#[cfg(all(target_os = "wasi", not(target_vendor = "wasmer")))]
 extern crate libc_wasix as libc;
 
 #[cfg_attr(unix, path = "sys/unix.rs")]
